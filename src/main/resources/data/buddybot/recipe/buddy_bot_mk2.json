@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["GDG", "BIB", "GOG"],
+  "key": {
+    "G": {"item": "minecraft:gold_ingot"},
+    "D": {"item": "minecraft:diamond"},
+    "B": {"item": "minecraft:redstone_block"},
+    "I": {"item": "buddybot:buddy_bot"},
+    "O": {"item": "minecraft:observer"}
+  },
+  "result": {"id": "buddybot:buddy_bot_mk2", "count": 1}
+}
