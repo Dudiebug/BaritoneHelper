@@ -1,52 +1,68 @@
-# BuddyBot verification evidence
+# Baritone Helper verification evidence
 
-Verified on 2026-08-29 with Java 21.0.12, Minecraft 1.21.1, NeoForge
-21.1.248, ModDevGradle 2.0.144, and Gradle 9.2.1.
+## Implemented product surface
 
-## Automated checks
+- Canonical mod namespace: `baritonehelper`
+- Canonical collector item/entity: `baritonehelper:baritone_helper`
+- Controller: `baritonehelper:worker_controller`
+- Cargo upgrade: `baritonehelper:cargo_upgrade`
+- Hidden compatibility alias: base `buddybot:buddy_bot` only
+- Java runtime and CI toolchain: Java 21
 
-| Check | Result |
-|---|---|
-| `tools/gauntlet.sh` from a clean build | PASS |
-| JUnit policy/math/recipe suite | PASS — 9 tests |
-| NeoForge `runGameTestServer` | PASS — 2 required tests |
-| Dedicated `runServer --nogui` startup | PASS — reached `Done (0.290s)!` |
-| Release artifact | PASS — `build/libs/buddybot-1.0.0.jar` |
-| Policy/math line coverage | 59/60 lines (98.3%) |
-| Skin format | PASS — 64×64 RGBA PNG |
-| Forbidden damage/invulnerability source gate | PASS |
-| Runtime dependency review | PASS — only NeoForge/Minecraft runtime graph; JUnit is test-only |
+## Collector-only guarantees
 
-The GameTests boot a real NeoForge server, create the registered entity, and verify
-spawn health/default tier plus owner/tier NBT round-tripping.
+Production source contains no BuddyBot tiers, rescue controller, rescue ability,
+threat classification, melee goal, owner-following goal, idle float/wander goal,
+cross-dimension owner transfer, combat-target suspension, or quiet-period state.
+The entity is invulnerable, non-attackable, non-hostile, non-pushable, and has no
+attack behavior.
 
-## Fault injection
+## Controller repair
 
-Three temporary mutations were applied together and then reverted:
+The former controller conflated target selection with execution and used air-use
+as an ambiguous pause toggle. The replacement has distinct operations:
 
-1. Basic range changed from 16 to 17.
-2. Cliff detection changed from three dangerous probes to four.
-3. Temporary restoration stopped checking the current block state.
+- controller-on-block configures or replaces a target and transitions to Ready;
+- the dashboard provides explicit Start Job and Stop Job buttons;
+- Stop retains target and storage while cancelling movement and tickets;
+- Clear Target removes the target instead of leaving a placeholder-equivalent
+  value;
+- controller air-use and controller-on-helper open the dashboard;
+- empty-hand helper interaction opens inventory; and
+- every action emits chat feedback while the dashboard exposes live state.
 
-The suite reported `9 tests completed, 3 failed`, killing all three mutations.
-The unmodified clean gauntlet and GameTest server were then rerun successfully.
+## Navigation repair
 
-## Safety evidence
+The planner now returns both a resource target and a standable work position.
+The controller navigates to the work position, verifies interaction distance and
+line of sight, and only then collects the resource. Failed paths are retried a
+bounded number of times and surface a specific blocking reason.
 
-- No handler subscribes to or cancels incoming player damage.
-- Player targets are explicitly rejected in both direct targeting and tame-owner
-  attack policy.
-- Block edits require `mobGriefing`, reject block entities and unbreakable blocks,
-  and post NeoForge placement/break events.
-- Cleanup compares the current state with the exact placed state. It leaves a
-  changed player block untouched.
-- Source-dimension temporary blocks are cleaned before a cross-dimension transfer.
+## Automated coverage
 
-## Manual runtime work still required
+`ControllerUxContractTest` verifies that target selection uses `configureTarget`
+rather than implicit `beginCollection`, that pause toggling is absent from the
+player controller, that explicit Start/Stop/Clear controls exist, that target and
+work positions are separate, and that controller actions have visible feedback.
 
-The container has no graphical Minecraft/display or two authenticated clients, so
-two-client rendering/multiplayer checks and the complete hazard matrix were not run.
-Until those are performed in Minecraft, rescue effectiveness is **needs runtime
-test**. In particular, manually test long-fall timing, near-void recovery, Nether
-vine placement, pearl travel, protected-claim event cancellation, deliberate lethal
-damage, and skin/model rendering on both clients.
+`WorkerControllerRegressionGameTests` verifies target replacement without
+starting, explicit and idempotent Start/Stop, retained target and storage,
+worker-ticket release, missing-target rejection, and target clearing.
+
+The existing GameTest and JUnit suites continue to cover inventory/job/storage
+persistence, legacy NBT ignoring, invulnerability, hostile targeting, no owner
+following or dimension transfer, dismissal conservation, offline collection,
+deposit, storage-full behavior, full-inventory conservation, exclusions, cargo
+limits, traversal, watchdog behavior, recipe/asset cardinality, and removal of
+legacy rescue architecture.
+
+## Required verification commands
+
+```sh
+./gradlew test
+./gradlew runGameTestServer
+./gradlew build
+```
+
+GitHub Actions executes these commands under Temurin Java 21. Verification is
+complete only after the workflow for the implementation commit reports success.

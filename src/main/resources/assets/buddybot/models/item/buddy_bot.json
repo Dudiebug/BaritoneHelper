@@ -1,4 +1,3 @@
 {
-  "parent": "minecraft:item/generated",
-  "textures": { "layer0": "minecraft:block/carved_pumpkin" }
+  "parent": "baritonehelper:item/baritone_helper"
 }

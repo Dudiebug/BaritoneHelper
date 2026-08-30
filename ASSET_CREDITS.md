@@ -1,7 +1,9 @@
 # Asset credits
 
-`assets/buddybot/textures/entity/buddy_bot.png` is **Cyborg Steve** by
-[PikiOne on The Skindex](https://www.minecraftskins.com/skin/22715920/cyborg-steve/),
-downloaded on 2026-08-29. The texture is intentionally kept unchanged and is not
-covered by this repository's MIT code license. Check the creator/platform terms
-before redistributing a public release.
+The Baritone Helper entity reuses the original 64×64 robotic-player skin that
+shipped with BuddyBot. The texture has moved to the canonical
+`baritonehelper:textures/entity/baritone_helper.png` location.
+
+The three canonical item models use vanilla Minecraft item textures as
+placeholders. `assets/buddybot/models/item/buddy_bot.json` is a model-only
+compatibility alias for old base item stacks; Mk II and Mk III assets are gone.
