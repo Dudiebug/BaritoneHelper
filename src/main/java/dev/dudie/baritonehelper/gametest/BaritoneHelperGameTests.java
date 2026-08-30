@@ -124,6 +124,7 @@ public final class BaritoneHelperGameTests {
         worker.bindTo(owner);
         worker.setItem(0, new ItemStack(Items.DIAMOND, 3));
         worker.ensureWorkerTickets();
+        var dropArea = worker.getBoundingBox().inflate(2.0);
 
         helper.assertTrue(worker.workerTicketCount() > 0, "worker must hold chunk tickets");
         owner.setShiftKeyDown(true);
@@ -137,7 +138,7 @@ public final class BaritoneHelperGameTests {
                     "returned base worker item");
             List<ItemEntity> drops = helper.getLevel().getEntitiesOfClass(
                     ItemEntity.class,
-                    helper.getBounds(),
+                    dropArea,
                     item -> item.getItem().is(Items.DIAMOND));
             int diamonds = drops.stream().mapToInt(item -> item.getItem().getCount()).sum();
             helper.assertValueEqual(diamonds, 3, "dismissed inventory diamonds");
