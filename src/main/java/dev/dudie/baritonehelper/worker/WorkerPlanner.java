@@ -8,6 +8,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -39,6 +40,14 @@ public final class WorkerPlanner {
         }
 
         BlockPos origin = worker.jobOrigin();
+        if (!temporarilyRejected.contains(origin.asLong())
+                && isCollectable(level, worker, origin, targetId)) {
+            Optional<BlockPos> workPosition = nearestWorkPosition(level, worker, origin);
+            if (workPosition.isPresent()) {
+                return Optional.of(new CollectionPlan(origin, workPosition.orElseThrow()));
+            }
+        }
+
         CollectionPlan best = null;
         double bestDistance = Double.MAX_VALUE;
 
@@ -62,7 +71,7 @@ public final class WorkerPlanner {
                             workPosition.getY(),
                             workPosition.getZ() + 0.5);
                     if (distance < bestDistance) {
-                        best = new CollectionPlan(candidate, workPosition);
+                        best = new CollectionPlan candidate, workPosition);
                         bestDistance = distance;
                     }
                 }
@@ -79,8 +88,9 @@ public final class WorkerPlanner {
                 target.getX() + 0.5,
                 target.getY() + 0.5,
                 target.getZ() + 0.5);
+        boolean closeContainer = level.getBlockEntity(target) instanceof Container;
         if (targetDistance <= CURRENT_POSITION_DISTANCE_SQUARED
-                && hasLineOfSight(level, worker, target)) {
+                && (closeContainer || hasLineOfSight(level, worker, target))) {
             // The worker is already in a valid interaction position. Do not reject
             // this merely because its live bounding box overlaps the candidate box.
             return Optional.of(worker.blockPosition().immutable());

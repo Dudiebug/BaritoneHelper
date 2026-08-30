@@ -293,11 +293,22 @@ public final class WorkerController {
     }
 
     private boolean navigateTo(BlockPos destination) {
-        return worker.getNavigation().moveTo(
+        boolean started = worker.getNavigation().moveTo(
                 destination.getX() + 0.5,
                 destination.getY(),
                 destination.getZ() + 0.5,
                 1.0);
+        if (!started && currentTarget != null && !currentTarget.equals(destination)) {
+            // Vanilla ground navigation can occasionally reject an otherwise open
+            // adjacent node. Pathing toward the solid target makes vanilla stop at
+            // the nearest legal adjacent node instead of leaving the worker idle.
+            started = worker.getNavigation().moveTo(
+                    currentTarget.getX() + 0.5,
+                    currentTarget.getY(),
+                    currentTarget.getZ() + 0.5,
+                    1.0);
+        }
+        return started;
     }
 
     private boolean canReach(ServerLevel level, BlockPos target) {
