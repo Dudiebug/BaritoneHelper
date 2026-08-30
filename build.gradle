@@ -14,6 +14,8 @@ base {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+sourceSets.main.java.srcDir(layout.buildDirectory.dir('generated/sources/embeddedBaritone/java'))
+
 sourceSets.main.resources {
     srcDir('src/generated/resources')
     exclude('**/*.bbmodel')
@@ -71,6 +73,16 @@ neoForge {
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+def prepareEmbeddedBaritone = tasks.register('prepareEmbeddedBaritone', Exec) {
+    inputs.file('tools/prepare_embedded_baritone.py')
+    outputs.dir(layout.buildDirectory.dir('generated/sources/embeddedBaritone/java'))
+    commandLine 'python3', 'tools/prepare_embedded_baritone.py'
+}
+
+tasks.named('compileJava').configure {
+    dependsOn prepareEmbeddedBaritone
 }
 
 tasks.named('test', Test).configure {
