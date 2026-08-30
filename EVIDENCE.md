@@ -1,68 +1,59 @@
-# Baritone Helper verification evidence
+# Baritone Helper 2.0 verification evidence
 
-## Implemented product surface
+## Architecture
 
-- Canonical mod namespace: `baritonehelper`
-- Canonical collector item/entity: `baritonehelper:baritone_helper`
-- Controller: `baritonehelper:worker_controller`
-- Cargo upgrade: `baritonehelper:cargo_upgrade`
-- Hidden compatibility alias: base `buddybot:buddy_bot` only
-- Java runtime and CI toolchain: Java 21
+- `WorkerEntity` owns one transient relocated Baritone-derived engine and calls
+  `serverTick` from the server entity tick.
+- `WorkerController` submits `GoalBlock` goals to the embedded path executor;
+  no vanilla `getNavigation().moveTo` movement path remains.
+- Mining uses `LivingEntityInteractionManager` progressive start/continue/stop
+  actions. Normal world drops remain `ItemEntity` instances and are physically
+  acquired by the worker.
+- `WorkerPlanner.SearchCursor` scans an ordered chunk frontier with a bounded
+  per-tick budget and returns separate resource/work positions.
+- Entity-owned tickets are capped at 16 and released on every stop/completion/
+  removal path.
 
-## Collector-only guarantees
+## GUI and network
 
-Production source contains no BuddyBot tiers, rescue controller, rescue ability,
-threat classification, melee goal, owner-following goal, idle float/wander goal,
-cross-dimension owner transfer, combat-target suspension, or quiet-period state.
-The entity is invulnerable, non-attackable, non-hostile, non-pushable, and has no
-attack behavior.
+The controller opens a normal responsive five-tab screen. Exact target selection
+is a registry-backed, localized, icon-bearing, scrollable picker; no ordinary
+world click stores a target type. Areas and storage use explicit armed selection
+modes. Custom NeoForge payloads carry request UUIDs, expected revisions,
+server-validated actions, acknowledgements, and complete snapshots. The old
+container class is retained only as a source-compatible, unsynchronized shim.
 
-## Controller repair
+## Persistence and migration
 
-The former controller conflated target selection with execution and used air-use
-as an ambiguous pause toggle. The replacement has distinct operations:
+Schema 2 stores the exact target, goal/progress, area, storage, exclusions,
+pathing/traversal policy, zones, runtime state, resume note, bounded timestamped
+activity history, and configuration revision. v1 owner/inventory/cargo/target/
+storage/exclusion/active-worker records migrate safely to `READY`; tier/rescue
+fields are ignored and stale paths are recalculated.
 
-- controller-on-block configures or replaces a target and transitions to Ready;
-- the dashboard provides explicit Start Job and Stop Job buttons;
-- Stop retains target and storage while cancelling movement and tickets;
-- Clear Target removes the target instead of leaving a placeholder-equivalent
-  value;
-- controller air-use and controller-on-helper open the dashboard;
-- empty-hand helper interaction opens inventory; and
-- every action emits chat feedback while the dashboard exposes live state.
+## Automated verification
 
-## Navigation repair
+The JUnit contract suite covers canonical assets/recipes, removal of legacy
+rescue/combat/following architecture, explicit dashboard controls, visible
+feedback, and separate target/work positions. NeoForge GameTests cover
+configuration and migration, real progressive break/drop pickup, vertical
+interaction, inventory/storage conservation, exclusions, finite/unlimited goals,
+watchdog/replanning, explicit Start/Stop/idempotency, offline operation, ticket
+cleanup, and worker protection behavior.
 
-The planner now returns both a resource target and a standable work position.
-The controller navigates to the work position, verifies interaction distance and
-line of sight, and only then collects the resource. Failed paths are retried a
-bounded number of times and surface a specific blocking reason.
-
-## Automated coverage
-
-`ControllerUxContractTest` verifies that target selection uses `configureTarget`
-rather than implicit `beginCollection`, that pause toggling is absent from the
-player controller, that explicit Start/Stop/Clear controls exist, that target and
-work positions are separate, and that controller actions have visible feedback.
-
-`WorkerControllerRegressionGameTests` verifies target replacement without
-starting, explicit and idempotent Start/Stop, retained target and storage,
-worker-ticket release, missing-target rejection, and target clearing.
-
-The existing GameTest and JUnit suites continue to cover inventory/job/storage
-persistence, legacy NBT ignoring, invulnerability, hostile targeting, no owner
-following or dimension transfer, dismissal conservation, offline collection,
-deposit, storage-full behavior, full-inventory conservation, exclusions, cargo
-limits, traversal, watchdog behavior, recipe/asset cardinality, and removal of
-legacy rescue architecture.
-
-## Required verification commands
+Run the release gate under Java 21:
 
 ```sh
-./gradlew test
-./gradlew runGameTestServer
-./gradlew build
+./gradlew clean test --no-daemon --console=plain
+./gradlew runGameTestServer --no-daemon --console=plain
+./gradlew build --no-daemon --console=plain
 ```
 
-GitHub Actions executes these commands under Temurin Java 21. Verification is
-complete only after the workflow for the implementation commit reports success.
+The build must contain exactly one runtime JAR and one source JAR. No release is
+published unless all commands pass and the artifact/version checks succeed.
+
+The final release-gate run on 2026-08-30 passed 14 JUnit tests, all 18 required
+NeoForge GameTests, and the Java 21 build. It produced
+`build/libs/baritonehelper-2.0.0.jar` (529,693 bytes) and
+`build/libs/baritonehelper-2.0.0-sources.jar` (300,691 bytes); the embedded
+metadata reports version 2.0.0 and license `MIT AND LGPL-3.0-or-later`.

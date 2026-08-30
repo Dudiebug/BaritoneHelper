@@ -21,10 +21,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests
-        run: ./gradlew test --no-daemon --console=plain
+        run: ./gradlew clean test --no-daemon --console=plain
 
       - name: Run NeoForge GameTests
         run: ./gradlew runGameTestServer --no-daemon --console=plain
 
       - name: Build release jar
-        run: ./gradlew build --no-daemon --console=plain
+        run: |
+          ./gradlew build --no-daemon --console=plain
+          test -f build/libs/baritonehelper-2.0.0.jar
+          test -f build/libs/baritonehelper-2.0.0-sources.jar

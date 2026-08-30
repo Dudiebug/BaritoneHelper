@@ -1,13 +1,13 @@
 modLoader="javafml"
 loaderVersion="${loader_version_range}"
 license="${mod_license}"
-issueTrackerURL="https://github.com/Dudiebug/BuddyBot-NeoForge/issues"
+issueTrackerURL="https://github.com/Dudiebug/BaritoneHelper/issues"
 
 [[mods]]
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
-displayURL="https://github.com/Dudiebug/BuddyBot-NeoForge"
+displayURL="https://github.com/Dudiebug/BaritoneHelper"
 authors="Dudiebug"
 description='''
 Baritone Helper adds one persistent, owner-bound, invulnerable resource

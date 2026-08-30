@@ -5,14 +5,15 @@ public enum WorkerJob {
     READY,
     COLLECT,
     DEPOSIT,
-    BLOCKED;
+    BLOCKED,
+    COMPLETED;
 
     public boolean activelyWorks() {
         return this == COLLECT || this == DEPOSIT;
     }
 
     public boolean isStopped() {
-        return this == IDLE || this == READY;
+        return this == IDLE || this == READY || this == COMPLETED;
     }
 
     public static WorkerJob fromSerialized(String value) {

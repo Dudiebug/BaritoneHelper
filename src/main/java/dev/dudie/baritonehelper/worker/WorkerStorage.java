@@ -13,7 +13,7 @@ public final class WorkerStorage {
 
         for (int workerSlot = 0; workerSlot < worker.getContainerSize(); workerSlot++) {
             ItemStack source = worker.getItem(workerSlot);
-            if (source.isEmpty()) {
+            if (source.isEmpty() || WorkerEntity.isReservedTool(source)) {
                 continue;
             }
 
@@ -33,6 +33,23 @@ public final class WorkerStorage {
             worker.setChanged();
         }
         return movedTotal;
+    }
+
+    public static boolean canAcceptAny(WorkerEntity worker, Container destination) {
+        for (int sourceSlot = 0; sourceSlot < worker.getContainerSize(); sourceSlot++) {
+            ItemStack source = worker.getItem(sourceSlot);
+            if (source.isEmpty() || WorkerEntity.isReservedTool(source)) continue;
+            for (int slot = 0; slot < destination.getContainerSize(); slot++) {
+                ItemStack existing = destination.getItem(slot);
+                if (destination.canPlaceItem(slot, source)
+                        && (existing.isEmpty()
+                            || ItemStack.isSameItemSameComponents(existing, source)
+                                && existing.getCount() < Math.min(destination.getMaxStackSize(), existing.getMaxStackSize()))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void moveInto(Container destination, ItemStack source) {

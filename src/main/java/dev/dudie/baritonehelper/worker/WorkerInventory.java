@@ -93,4 +93,12 @@ public final class WorkerInventory {
         }
         return incoming;
     }
+
+    /** Moves items from a live ItemEntity stack, returning the accepted count. */
+    public static int insertGroundStack(WorkerEntity worker, ItemStack groundStack) {
+        if (groundStack == null || groundStack.isEmpty()) return 0;
+        int before = groundStack.getCount();
+        insert(worker, groundStack);
+        return before - groundStack.getCount();
+    }
 }
