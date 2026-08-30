@@ -3,6 +3,7 @@ package dev.dudie.baritonehelper.item;
 import dev.dudie.baritonehelper.ActiveWorkerData;
 import dev.dudie.baritonehelper.BaritoneHelper;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.worker.WorkerMessages;
 import java.util.Optional;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -36,17 +37,27 @@ public final class WorkerControllerItem extends Item {
 
         WorkerEntity worker = findOwnedWorker(player).orElse(null);
         if (worker == null) {
-            message(player, "message.baritonehelper.no_worker", ChatFormatting.RED);
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.no_worker");
             return InteractionResult.FAIL;
         }
         if (worker.level() != level) {
-            message(player, "message.baritonehelper.other_dimension", ChatFormatting.RED);
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.other_dimension");
             return InteractionResult.FAIL;
         }
 
         var position = context.getClickedPos();
         var state = level.getBlockState(position);
         if (state.isAir()) {
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.invalid_target");
             return InteractionResult.FAIL;
         }
 
@@ -55,31 +66,63 @@ public final class WorkerControllerItem extends Item {
             BlockEntity blockEntity = level.getBlockEntity(position);
             if (blockEntity instanceof Container) {
                 worker.assignStorage(level, position);
-                player.displayClientMessage(
-                        Component.translatable(
-                                "message.baritonehelper.storage_assigned",
-                                position.getX(),
-                                position.getY(),
-                                position.getZ()),
-                        true);
+                WorkerMessages.send(
+                        player,
+                        ChatFormatting.GREEN,
+                        "message.baritonehelper.storage_assigned",
+                        position.getX(),
+                        position.getY(),
+                        position.getZ());
             } else {
                 boolean excluded = worker.toggleExclusion(blockId);
-                player.displayClientMessage(
-                        Component.translatable(
-                                excluded
-                                        ? "message.baritonehelper.excluded"
-                                        : "message.baritonehelper.included",
-                                blockId.toString()),
-                        true);
+                WorkerMessages.send(
+                        player,
+                        excluded ? ChatFormatting.YELLOW : ChatFormatting.GREEN,
+                        excluded
+                                ? "message.baritonehelper.excluded"
+                                : "message.baritonehelper.included",
+                        state.getBlock().getName());
             }
-        } else {
-            worker.beginCollection(blockId, position);
-            player.displayClientMessage(
-                    Component.translatable(
-                            "message.baritonehelper.collecting",
-                            blockId.toString()),
-                    true);
+            return InteractionResult.CONSUME;
         }
+
+        if (level.getBlockEntity(position) != null
+                || state.getDestroySpeed(level, position) < 0.0F) {
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.invalid_target");
+            return InteractionResult.FAIL;
+        }
+
+        Optional<ResourceLocation> previous = worker.configureTarget(blockId, position);
+        Component targetName = state.getBlock().getName();
+        if (previous.isEmpty()) {
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.GREEN,
+                    "message.baritonehelper.target_set",
+                    targetName);
+        } else if (previous.get().equals(blockId)) {
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.GREEN,
+                    "message.baritonehelper.target_confirmed",
+                    targetName);
+        } else {
+            Component previousName = BuiltInRegistries.BLOCK.get(previous.get()).getName();
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.GREEN,
+                    "message.baritonehelper.target_changed",
+                    previousName,
+                    targetName);
+        }
+        WorkerMessages.send(
+                player,
+                ChatFormatting.GRAY,
+                "message.baritonehelper.target_ready");
+        worker.openDashboard(player);
         return InteractionResult.CONSUME;
     }
 
@@ -96,17 +139,21 @@ public final class WorkerControllerItem extends Item {
 
         WorkerEntity worker = findOwnedWorker(serverPlayer).orElse(null);
         if (worker == null) {
-            message(serverPlayer, "message.baritonehelper.no_worker", ChatFormatting.RED);
+            WorkerMessages.send(
+                    serverPlayer,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.no_worker");
+            return InteractionResultHolder.fail(stack);
+        }
+        if (worker.level() != level) {
+            WorkerMessages.send(
+                    serverPlayer,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.other_dimension");
             return InteractionResultHolder.fail(stack);
         }
 
-        var newJob = worker.togglePaused();
-        serverPlayer.displayClientMessage(
-                Component.translatable(
-                        newJob == dev.dudie.baritonehelper.worker.WorkerJob.PAUSED
-                                ? "message.baritonehelper.paused"
-                                : "message.baritonehelper.resumed"),
-                true);
+        worker.openDashboard(serverPlayer);
         return InteractionResultHolder.consume(stack);
     }
 
@@ -168,14 +215,5 @@ public final class WorkerControllerItem extends Item {
 
         active.clear();
         return null;
-    }
-
-    private static void message(
-            ServerPlayer player,
-            String translationKey,
-            ChatFormatting formatting) {
-        player.displayClientMessage(
-                Component.translatable(translationKey).withStyle(formatting),
-                true);
     }
 }
