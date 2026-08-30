@@ -10,9 +10,13 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 public final class WorkerController {
@@ -20,7 +24,7 @@ public final class WorkerController {
     private static final int ACTION_INTERVAL_TICKS = 10;
     private static final int WATCHDOG_TICKS = 200;
     private static final int REJECTED_TARGET_TICKS = 200;
-    private static final double ACTION_DISTANCE_SQUARED = 9.0;
+    private static final double ACTION_DISTANCE_SQUARED = 2.25;
     private static final ItemStack WORK_TOOL = new ItemStack(Items.NETHERITE_PICKAXE);
 
     private final WorkerEntity worker;
@@ -110,7 +114,8 @@ public final class WorkerController {
                 currentTarget.getY() + 0.5,
                 currentTarget.getZ() + 0.5);
 
-        if (distance <= ACTION_DISTANCE_SQUARED) {
+        if (distance <= ACTION_DISTANCE_SQUARED
+                && canReach(level, currentTarget)) {
             worker.getNavigation().stop();
             if (actionCooldown == 0) {
                 collect(level, currentTarget);
@@ -129,9 +134,21 @@ public final class WorkerController {
         watchProgress(currentTarget, distance);
     }
 
+    private boolean canReach(ServerLevel level, BlockPos target) {
+        BlockHitResult hit = level.clip(new ClipContext(
+                worker.getEyePosition(),
+                Vec3.atCenterOf(target),
+                ClipContext.Block.OUTLINE,
+                ClipContext.Fluid.NONE,
+                worker));
+        return hit.getType() == HitResult.Type.BLOCK
+                && hit.getBlockPos().equals(target);
+    }
+
     private void collect(ServerLevel level, BlockPos position) {
         var targetId = worker.targetBlockId().orElse(null);
-        if (targetId == null || !WorkerPlanner.isCollectable(level, worker, position, targetId)) {
+        if (targetId == null
+                || !WorkerPlanner.isCollectable(level, worker, position, targetId)) {
             currentTarget = null;
             return;
         }
@@ -144,7 +161,8 @@ public final class WorkerController {
 
         BlockEntity blockEntity = level.getBlockEntity(position);
         var state = level.getBlockState(position);
-        List<ItemStack> drops = Block.getDrops(state, level, position, blockEntity, worker, WORK_TOOL);
+        List<ItemStack> drops = Block.getDrops(
+                state, level, position, blockEntity, worker, WORK_TOOL);
         if (drops.isEmpty()) {
             reject(position);
             return;

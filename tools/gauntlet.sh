@@ -21,12 +21,12 @@ gradle=("$java_bin" -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrap
 
 test -s build/libs/baritonehelper-1.0.0.jar
 test ! -e src/main/java/dev/dudie/buddybot
-test ! -e src/main/resources/assets/buddybot
 test ! -e src/main/resources/data/buddybot
+test -f src/main/resources/assets/buddybot/models/item/buddy_bot.json
 
-if rg -n 'BuddyBotTier|RescueController|FollowOwnerGoal|MeleeAttackGoal|changeDimension\(' \
-    src/main/java/dev/dudie/baritonehelper; then
-  echo "Removed tier, rescue, combat, or owner-following code is still present." >&2
+if rg -n 'BuddyBotTier|RescueController|FollowOwnerGoal|MeleeAttackGoal|FloatGoal|changeDimension\(' \
+    src/main/java/dev/dudie/baritonehelper -g '!**/gametest/**'; then
+  echo "Removed tier, rescue, combat, following, or idle AI code is still present." >&2
   exit 1
 fi
 

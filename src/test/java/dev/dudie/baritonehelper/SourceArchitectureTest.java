@@ -11,11 +11,13 @@ import org.junit.jupiter.api.Test;
 
 class SourceArchitectureTest {
     @Test
-    void rescueTierCombatAndFollowingArchitectureIsGone() throws IOException {
+    void rescueTierCombatFollowingAndIdleAiArchitectureIsGone() throws IOException {
         Path sourceRoot = Path.of("src/main/java/dev/dudie/baritonehelper");
         String source;
         try (var stream = Files.walk(sourceRoot)) {
-            source = stream.filter(path -> path.toString().endsWith(".java"))
+            source = stream
+                    .filter(path -> path.toString().endsWith(".java"))
+                    .filter(path -> !path.toString().contains("/gametest/"))
                     .map(path -> {
                         try {
                             return Files.readString(path);
@@ -32,11 +34,25 @@ class SourceArchitectureTest {
         assertFalse(source.contains("ThreatType"));
         assertFalse(source.contains("FollowOwnerGoal"));
         assertFalse(source.contains("MeleeAttackGoal"));
+        assertFalse(source.contains("FloatGoal"));
         assertFalse(source.contains("changeDimension("));
         assertFalse(source.contains("quietPeriod"));
         assertFalse(source.contains("combatTarget"));
+        assertFalse(source.contains("Attributes.ATTACK_DAMAGE"));
         assertTrue(source.contains("setInvulnerable(true)"));
         assertTrue(source.contains("public boolean isAttackable()"));
+        assertTrue(source.contains("ClipContext.Block.OUTLINE"));
+        assertTrue(source.contains("temporarilyRejected"));
+    }
+
+    @Test
+    void canonicalPublicIdIsBaritoneHelper() throws IOException {
+        String bootstrap = Files.readString(
+                Path.of("src/main/java/dev/dudie/baritonehelper/BaritoneHelper.java"));
+        assertTrue(bootstrap.contains("BARITONE_HELPER_ENTITY"));
+        assertTrue(bootstrap.contains("BARITONE_HELPER"));
+        assertTrue(bootstrap.contains("\"baritone_helper\""));
+        assertFalse(bootstrap.contains("ITEMS.register(\"worker\""));
     }
 
     @Test

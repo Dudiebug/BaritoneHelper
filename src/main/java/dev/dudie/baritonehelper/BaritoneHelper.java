@@ -11,10 +11,10 @@ import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
-import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
-import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.neoforged.neoforge.common.world.chunk.RegisterTicketControllersEvent;
 import net.neoforged.neoforge.common.world.chunk.TicketController;
+import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
@@ -28,41 +28,69 @@ public final class BaritoneHelper {
     private static final DeferredRegister<EntityType<?>> LEGACY_ENTITIES =
             DeferredRegister.create(Registries.ENTITY_TYPE, LEGACY_NAMESPACE);
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(MOD_ID);
+    private static final DeferredRegister.Items LEGACY_ITEMS =
+            DeferredRegister.createItems(LEGACY_NAMESPACE);
     public static final DeferredRegister<net.neoforged.neoforge.attachment.AttachmentType<?>> ATTACHMENTS =
-            DeferredRegister.create(net.neoforged.neoforge.registries.NeoForgeRegistries.Keys.ATTACHMENT_TYPES, MOD_ID);
+            DeferredRegister.create(
+                    net.neoforged.neoforge.registries.NeoForgeRegistries.Keys.ATTACHMENT_TYPES,
+                    MOD_ID);
 
-    public static final DeferredHolder<EntityType<?>, EntityType<WorkerEntity>> WORKER_ENTITY =
-            ENTITIES.register("worker", () -> workerType(MOD_ID + ":worker"));
+    public static final DeferredHolder<EntityType<?>, EntityType<WorkerEntity>> BARITONE_HELPER_ENTITY =
+            ENTITIES.register(
+                    "baritone_helper",
+                    () -> workerType(MOD_ID + ":baritone_helper"));
 
     /**
-     * Hidden registry alias used only so already-placed buddybot:buddy_bot entities
-     * remain loadable after the mod ID and public interface are renamed.
+     * Hidden serialization alias used only so already-placed buddybot:buddy_bot
+     * entities remain loadable after the public rename.
      */
-    public static final DeferredHolder<EntityType<?>, EntityType<WorkerEntity>> LEGACY_WORKER_ENTITY =
-            LEGACY_ENTITIES.register("buddy_bot", () -> workerType(LEGACY_NAMESPACE + ":buddy_bot"));
+    public static final DeferredHolder<EntityType<?>, EntityType<WorkerEntity>> LEGACY_BARITONE_HELPER_ENTITY =
+            LEGACY_ENTITIES.register(
+                    "buddy_bot",
+                    () -> workerType(LEGACY_NAMESPACE + ":buddy_bot"));
 
-    public static final DeferredHolder<Item, WorkerItem> WORKER =
-            ITEMS.register("worker", () -> new WorkerItem(new Item.Properties().stacksTo(1)));
+    public static final DeferredHolder<Item, WorkerItem> BARITONE_HELPER =
+            ITEMS.register(
+                    "baritone_helper",
+                    () -> new WorkerItem(new Item.Properties().stacksTo(1)));
+
+    /**
+     * Hidden item alias for old base BuddyBot stacks. It has no recipe or
+     * creative-tab entry and always places the canonical Baritone Helper entity.
+     */
+    private static final DeferredHolder<Item, WorkerItem> LEGACY_BARITONE_HELPER =
+            LEGACY_ITEMS.register(
+                    "buddy_bot",
+                    () -> new WorkerItem(new Item.Properties().stacksTo(1)));
+
     public static final DeferredHolder<Item, WorkerControllerItem> WORKER_CONTROLLER =
-            ITEMS.register("worker_controller", () -> new WorkerControllerItem(new Item.Properties().stacksTo(1)));
+            ITEMS.register(
+                    "worker_controller",
+                    () -> new WorkerControllerItem(new Item.Properties().stacksTo(1)));
     public static final DeferredHolder<Item, Item> CARGO_UPGRADE =
-            ITEMS.register("cargo_upgrade", () -> new Item(new Item.Properties().stacksTo(1)));
+            ITEMS.register(
+                    "cargo_upgrade",
+                    () -> new Item(new Item.Properties().stacksTo(1)));
 
     public static final DeferredHolder<
             net.neoforged.neoforge.attachment.AttachmentType<?>,
             net.neoforged.neoforge.attachment.AttachmentType<ActiveWorkerData>> ACTIVE_WORKER =
-            ATTACHMENTS.register("active_worker", () -> net.neoforged.neoforge.attachment.AttachmentType
-                    .serializable(ActiveWorkerData::new)
-                    .copyOnDeath()
-                    .build());
+            ATTACHMENTS.register(
+                    "active_worker",
+                    () -> net.neoforged.neoforge.attachment.AttachmentType
+                            .serializable(ActiveWorkerData::new)
+                            .copyOnDeath()
+                            .build());
 
     public static final TicketController WORKER_TICKETS =
-            new TicketController(ResourceLocation.fromNamespaceAndPath(MOD_ID, "worker"));
+            new TicketController(
+                    ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_worker"));
 
     public BaritoneHelper(IEventBus modBus) {
         ENTITIES.register(modBus);
         LEGACY_ENTITIES.register(modBus);
         ITEMS.register(modBus);
+        LEGACY_ITEMS.register(modBus);
         ATTACHMENTS.register(modBus);
         modBus.addListener(this::attributes);
         modBus.addListener(this::creativeTab);
@@ -79,13 +107,15 @@ public final class BaritoneHelper {
     }
 
     private void attributes(EntityAttributeCreationEvent event) {
-        event.put(WORKER_ENTITY.get(), WorkerEntity.createAttributes().build());
-        event.put(LEGACY_WORKER_ENTITY.get(), WorkerEntity.createAttributes().build());
+        event.put(BARITONE_HELPER_ENTITY.get(), WorkerEntity.createAttributes().build());
+        event.put(
+                LEGACY_BARITONE_HELPER_ENTITY.get(),
+                WorkerEntity.createAttributes().build());
     }
 
     private void creativeTab(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.TOOLS_AND_UTILITIES) {
-            event.accept(WORKER.get());
+            event.accept(BARITONE_HELPER.get());
             event.accept(WORKER_CONTROLLER.get());
             event.accept(CARGO_UPGRADE.get());
         }

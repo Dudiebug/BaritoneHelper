@@ -1,18 +1,18 @@
 {
-  "entity.baritonehelper.worker": "Resource Worker",
-  "item.baritonehelper.worker": "Resource Worker",
+  "entity.baritonehelper.baritone_helper": "Baritone Helper",
+  "item.baritonehelper.baritone_helper": "Baritone Helper",
   "item.baritonehelper.worker_controller": "Worker Controller",
   "item.baritonehelper.cargo_upgrade": "Cargo Upgrade",
-  "container.baritonehelper.worker": "Resource Worker Inventory",
-  "message.baritonehelper.already_active": "You already have an active resource worker. Sneak-right-click it to dismiss it.",
-  "message.baritonehelper.no_worker": "No active resource worker was found.",
-  "message.baritonehelper.other_dimension": "The resource worker is in another dimension and will not teleport to you.",
-  "message.baritonehelper.collecting": "Worker assigned to collect %s.",
+  "container.baritonehelper.baritone_helper": "Baritone Helper Inventory",
+  "message.baritonehelper.already_active": "You already have an active Baritone Helper. Sneak-right-click it to dismiss it.",
+  "message.baritonehelper.no_worker": "No active Baritone Helper was found.",
+  "message.baritonehelper.other_dimension": "Your Baritone Helper is in another dimension and will not teleport to you.",
+  "message.baritonehelper.collecting": "Baritone Helper assigned to collect %s.",
   "message.baritonehelper.storage_assigned": "Storage assigned at %s, %s, %s.",
   "message.baritonehelper.excluded": "%s is now excluded.",
   "message.baritonehelper.included": "%s is no longer excluded.",
-  "message.baritonehelper.paused": "Resource worker paused.",
-  "message.baritonehelper.resumed": "Resource worker resumed.",
+  "message.baritonehelper.paused": "Baritone Helper paused.",
+  "message.baritonehelper.resumed": "Baritone Helper resumed.",
   "message.baritonehelper.cargo_installed": "Cargo upgrade installed. Capacity increased to 54 slots.",
-  "message.baritonehelper.cargo_max": "This worker already has the maximum cargo upgrade."
+  "message.baritonehelper.cargo_max": "This Baritone Helper already has the maximum cargo upgrade."
 }

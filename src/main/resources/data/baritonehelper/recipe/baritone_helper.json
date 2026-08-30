@@ -7,5 +7,5 @@
     "R": {"item": "minecraft:redstone"},
     "P": {"item": "minecraft:carved_pumpkin"}
   },
-  "result": {"id": "baritonehelper:worker", "count": 1}
+  "result": {"id": "baritonehelper:baritone_helper", "count": 1}
 }

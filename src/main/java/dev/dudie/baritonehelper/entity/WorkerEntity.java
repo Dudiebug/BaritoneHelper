@@ -29,7 +29,6 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.player.Inventory;
@@ -78,7 +77,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     public void bindTo(Player owner) {
         tame(owner);
         setOwnerUUID(owner.getUUID());
-        setCustomName(Component.translatable("entity.baritonehelper.worker"));
+        setCustomName(Component.translatable("entity.baritonehelper.baritone_helper"));
         setCustomNameVisible(false);
     }
 
@@ -89,7 +88,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     protected void registerGoals() {
-        goalSelector.addGoal(0, new FloatGoal(this));
+        // Worker movement is issued only by WorkerController for an active job.
     }
 
     @Override
@@ -385,7 +384,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
 
         releaseInventoryOnce();
-        ItemStack workerItem = new ItemStack(BaritoneHelper.WORKER.get());
+        ItemStack workerItem = new ItemStack(BaritoneHelper.BARITONE_HELPER.get());
         if (!player.getInventory().add(workerItem)) {
             player.drop(workerItem, false);
         }
@@ -493,7 +492,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     public Component getDisplayName() {
-        return Component.translatable("container.baritonehelper.worker");
+        return Component.translatable("container.baritonehelper.baritone_helper");
     }
 
     @Override
@@ -572,7 +571,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         ticketsConfirmed = false;
         workerController.resetTransientState();
 
-        setCustomName(Component.translatable("entity.baritonehelper.worker"));
+        setCustomName(Component.translatable("entity.baritonehelper.baritone_helper"));
         setCustomNameVisible(false);
     }
 

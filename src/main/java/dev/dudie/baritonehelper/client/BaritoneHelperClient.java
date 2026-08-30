@@ -22,8 +22,10 @@ public final class BaritoneHelperClient {
 
     @SubscribeEvent
     static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
-        event.registerEntityRenderer(BaritoneHelper.WORKER_ENTITY.get(), Renderer::new);
-        event.registerEntityRenderer(BaritoneHelper.LEGACY_WORKER_ENTITY.get(), Renderer::new);
+        event.registerEntityRenderer(
+                BaritoneHelper.BARITONE_HELPER_ENTITY.get(), Renderer::new);
+        event.registerEntityRenderer(
+                BaritoneHelper.LEGACY_BARITONE_HELPER_ENTITY.get(), Renderer::new);
     }
 
     private static final class Renderer
@@ -31,7 +33,7 @@ public final class BaritoneHelperClient {
         private static final ResourceLocation TEXTURE =
                 ResourceLocation.fromNamespaceAndPath(
                         BaritoneHelper.MOD_ID,
-                        "textures/entity/worker.png");
+                        "textures/entity/baritone_helper.png");
 
         private Renderer(EntityRendererProvider.Context context) {
             super(

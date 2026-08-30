@@ -17,6 +17,11 @@ public final class WorkerItem extends Item {
     }
 
     @Override
+    public String getDescriptionId() {
+        return "item.baritonehelper.baritone_helper";
+    }
+
+    @Override
     public InteractionResult useOn(UseOnContext context) {
         if (!(context.getLevel() instanceof ServerLevel level)
                 || !(context.getPlayer() instanceof ServerPlayer player)) {
@@ -33,7 +38,7 @@ public final class WorkerItem extends Item {
             return InteractionResult.FAIL;
         }
 
-        WorkerEntity worker = BaritoneHelper.WORKER_ENTITY.get().create(level);
+        WorkerEntity worker = BaritoneHelper.BARITONE_HELPER_ENTITY.get().create(level);
         if (worker == null) {
             return InteractionResult.FAIL;
         }
