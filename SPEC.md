@@ -1,36 +1,68 @@
-# BuddyBot executable specification
+# Baritone Helper executable specification
 
-Status: approved product plan; executable wording finalized autonomously on 2026-08-29.
+## Product identity
 
-## Setup
+- Display name: **Baritone Helper**
+- Mod ID and resource namespace: `baritonehelper`
+- Java package: `dev.dudie.baritonehelper`
+- Public items: `baritonehelper:worker`,
+  `baritonehelper:worker_controller`, and `baritonehelper:cargo_upgrade`
+- Public entity: `baritonehelper:worker`
 
-- Standalone Git repository based on the official NeoForge 1.21.1 ModDevGradle MDK.
-- Java 21, Minecraft 1.21.1, NeoForge 21.1.248, JUnit Jupiter 5.11.4.
-- No runtime libraries beyond Minecraft and NeoForge.
-- Generated project files: sources, resources, unit tests, GameTests, `tools/gauntlet.sh`, and `EVIDENCE.md`.
-- No commits are created without a separate request.
+A hidden `buddybot:buddy_bot` entity-type alias is retained only to load
+already-placed base entities. Legacy tier fields are ignored. Mk II and Mk III
+item stacks are not migrated.
 
-## Executable behavior
+## Required behavior
 
-1. `BuddyBot`, `BuddyBot Mk II`, and `BuddyBot Mk III` have rescue ranges 16, 32, and 64 blocks and strictly cumulative capabilities.
-2. Threat order is long fall/void, suffocation/drowning, lava/fire, explosion/projectile, hostile mob, status damage.
-3. Four footprint probes select the highest finite landing surface. A cliff is dangerous when at least three of eight probes drop more than four blocks.
-4. A ballistic solution has the requested launch speed and intersects the requested target under constant gravity; unreachable trajectories return empty.
-5. A temporary block is restored only while its current state is exactly the state BuddyBot placed.
-6. The three shaped recipe JSON files exactly implement the approved ingredient patterns and upgrade chain.
-7. Using a BuddyBot item creates one owner-bound persistent entity and consumes the item only on success. A live attachment blocks duplicates; a positively verified stale attachment is repaired.
-8. Sneak-interacting with your bot returns its tier item and removes the entity. Other players cannot dismiss it.
-9. BuddyBot follows its owner, idles while the owner is offline, and rejoins across dimensions.
-10. Basic rescues cover hostiles, projectiles, cliffs, cobweb catches, drowning, and suffocation. Mk II adds four-corner fall clutches, fluids/hazards, and support potions. Mk III adds pearl repositioning, slow falling, platforms, short bridges, and explosion shields.
-11. World edits require `mobGriefing`, pass NeoForge entity place/break events, exclude block entities/unbreakable blocks, and never overwrite later player edits during cleanup.
-12. BuddyBot never cancels player damage, grants invulnerability, or targets a player.
+1. There is one owner-bound Resource Worker with no tier constructor, tier
+   accessor, tier NBT, or tier-specific registry constants.
+2. Owner, inventory, cargo state, job, collection target, work origin, storage,
+   exclusions, and worker-ticket coordinates survive entity NBT round trips.
+3. Generic, mob, fall, fire, and explosion damage never reduce worker health.
+4. The worker is not attackable, cannot be seen as an enemy, and cannot attack.
+5. The worker contains no melee, owner-following, rescue, threat, or
+   cross-dimension transfer logic. An idle worker stops navigation.
+6. Normal gameplay removal is owner dismissal. Dismissal drops inventory
+   contents once, returns one base worker item, clears the active-worker record,
+   releases every worker chunk ticket, and discards the entity.
+7. The Worker Controller:
+   - assigns an exact block registry ID and bounded work origin;
+   - assigns same-dimension `Container` storage;
+   - toggles block-type exclusions;
+   - pauses/resumes jobs; and
+   - opens the owned worker inventory.
+8. Base inventory capacity is 27 slots. One Cargo Upgrade expands it to 54
+   slots. Additional cargo upgrades are rejected.
+9. Collection uses worker navigation, scans only a bounded area, refuses
+   unloaded candidates, block entities, excluded types, and unbreakable blocks,
+   and requires `mobGriefing`.
+10. The planner predicts drops with the worker tool and does not break a target
+    unless every predicted stack fits. Successful breaking inserts exactly
+    those drops.
+11. A full inventory switches to deposit when valid storage exists. Missing,
+    invalid, cross-dimension, or full storage blocks the job without deleting
+    inventory.
+12. A navigation watchdog temporarily rejects stalled targets and resumes
+    bounded scanning instead of accumulating dead combat-suspension or
+    quiet-period state.
+13. Entity-owned NeoForge chunk tickets keep the current 3×3 worker area plus
+    relevant work/storage chunks ticking for offline work. Dismissal releases
+    them.
+14. Recipe and asset contracts expose exactly the worker, controller, and cargo
+    upgrade. Tier recipes, models, translations, and creative-tab entries are
+    absent.
 
-## Failure model
+## Verification
 
-- Duplicate or stale ownership records: attachment lifecycle and stale-repair tests.
-- Player-built state overwritten by cleanup: exact-state restoration tests and GameTests.
-- Claim or gamerule bypass: denied-edit GameTests and source gate.
-- Capability leakage into cheaper tiers: exhaustive tier matrix tests.
-- Bad projectile math: reachable, unreachable, and randomized trajectory properties.
-- Accidental god mode or PvP aggression: source gate plus lethal-damage/manual runtime scenario.
-- Orphaned temporary edits after dismissal/death: cleanup tests and persisted ledger inspection.
+Required commands under Java 21:
+
+```sh
+./gradlew test
+./gradlew runGameTestServer
+```
+
+The GameTest suite covers NBT persistence without tier data, damage immunity,
+hostile-target rejection, idle non-following behavior, and dismissal
+conservation/ticket cleanup. JUnit contracts cover item/recipe/asset cardinality
+and removal of the rescue/tier/combat architecture.

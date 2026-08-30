@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["ILI", "LCL", "ILI"],
+  "key": {
+    "I": {"item": "minecraft:iron_ingot"},
+    "L": {"item": "minecraft:leather"},
+    "C": {"item": "minecraft:chest"}
+  },
+  "result": {"id": "baritonehelper:cargo_upgrade", "count": 1}
+}

@@ -1,8 +1,0 @@
-{
-  "entity.buddybot.buddy_bot": "BuddyBot",
-  "entity.buddybot.buddy_bot.name": "%s",
-  "item.buddybot.buddy_bot": "BuddyBot",
-  "item.buddybot.buddy_bot_mk2": "BuddyBot Mk II",
-  "item.buddybot.buddy_bot_mk3": "BuddyBot Mk III",
-  "message.buddybot.already_active": "You already have an active BuddyBot. Sneak-right-click it to dismiss it."
-}
