@@ -71,7 +71,7 @@ public final class WorkerPlanner {
                             workPosition.getY(),
                             workPosition.getZ() + 0.5);
                     if (distance < bestDistance) {
-                        best = new CollectionPlan candidate, workPosition);
+                        best = new CollectionPlan(candidate, workPosition);
                         bestDistance = distance;
                     }
                 }
