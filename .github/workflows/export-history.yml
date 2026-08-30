@@ -1,0 +1,39 @@
+name: Export full repository history
+
+on:
+  push:
+    branches:
+      - rewrite/real-baritone-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-history:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch branches, tags, and pull request heads
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --tags --force
+          git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*' --force || true
+      - name: Create history bundle and ref inventory
+        run: |
+          git bundle create BaritoneHelper-history.bundle --all
+          git for-each-ref --sort=-committerdate --format='%(refname) %(objectname) %(committerdate:iso8601) %(subject)' > refs.txt
+          git log --all --date=iso-strict --pretty=format:'%H%x09%P%x09%ad%x09%s' > commits.tsv
+      - name: Upload history snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: baritonehelper-history
+          path: |
+            BaritoneHelper-history.bundle
+            refs.txt
+            commits.tsv
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
