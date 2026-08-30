@@ -376,9 +376,18 @@ public final class BaritoneHelperGameTests {
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(target));
 
         helper.runAfterDelay(100, () -> {
-            helper.assertTrue(
-                    helper.getBlockState(target).isAir(),
-                    "reachable target must be collected");
+            String diagnostic = "reachable target must be collected; "
+                    + "position=" + worker.position()
+                    + ", startDistance=" + worker.position().distanceToSqr(start)
+                    + ", job=" + worker.job()
+                    + ", activity=" + worker.activity()
+                    + ", reason=" + worker.blockReason()
+                    + ", target=" + worker.currentTarget()
+                    + ", workPosition=" + worker.currentWorkPosition()
+                    + ", navigationDone=" + worker.getNavigation().isDone()
+                    + ", replans=" + worker.replanAttempts()
+                    + ", noProgressTicks=" + worker.lastProgressAgeTicks();
+            helper.assertTrue(helper.getBlockState(target).isAir(), diagnostic);
             helper.assertTrue(
                     worker.position().distanceToSqr(start) > 0.25,
                     "helper must navigate toward a distant target");

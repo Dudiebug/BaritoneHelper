@@ -3,6 +3,7 @@ package dev.dudie.baritonehelper.item;
 import dev.dudie.baritonehelper.ActiveWorkerData;
 import dev.dudie.baritonehelper.BaritoneHelper;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.worker.WorkerMessages;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -34,7 +35,7 @@ public final class WorkerItem extends Item {
             player.displayClientMessage(
                     Component.translatable("message.baritonehelper.already_active")
                             .withStyle(ChatFormatting.RED),
-                    true);
+                    false);
             return InteractionResult.FAIL;
         }
 
@@ -53,16 +54,27 @@ public final class WorkerItem extends Item {
         worker.bindTo(player);
 
         if (!level.noCollision(worker)) {
+            WorkerMessages.send(
+                    player,
+                    ChatFormatting.RED,
+                    "message.baritonehelper.cannot_place");
             return InteractionResult.FAIL;
         }
 
         level.addFreshEntity(worker);
-        worker.ensureWorkerTickets();
         active.set(
                 worker.getUUID(),
                 level.dimension().location().toString(),
                 worker.blockPosition());
         context.getItemInHand().consume(1, player);
+        WorkerMessages.send(
+                player,
+                ChatFormatting.GREEN,
+                "message.baritonehelper.placed");
+        WorkerMessages.send(
+                player,
+                ChatFormatting.GRAY,
+                "message.baritonehelper.placed_hint");
         return InteractionResult.CONSUME;
     }
 }

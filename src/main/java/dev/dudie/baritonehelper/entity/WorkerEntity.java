@@ -1,13 +1,19 @@
 package dev.dudie.baritonehelper.entity;
 
 import dev.dudie.baritonehelper.BaritoneHelper;
+import dev.dudie.baritonehelper.menu.WorkerDashboardMenu;
+import dev.dudie.baritonehelper.worker.WorkerActionResult;
+import dev.dudie.baritonehelper.worker.WorkerActivity;
+import dev.dudie.baritonehelper.worker.WorkerBlockReason;
 import dev.dudie.baritonehelper.worker.WorkerController;
 import dev.dudie.baritonehelper.worker.WorkerJob;
+import dev.dudie.baritonehelper.worker.WorkerMessages;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
@@ -23,6 +29,7 @@ import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.MenuProvider;
+import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -53,12 +60,13 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     private int cargoUpgrades;
     private WorkerJob job = WorkerJob.IDLE;
-    private WorkerJob resumeJob = WorkerJob.COLLECT;
+    private WorkerBlockReason blockReason = WorkerBlockReason.NONE;
     private @Nullable ResourceLocation targetBlockId;
     private BlockPos jobOrigin = BlockPos.ZERO;
     private @Nullable BlockPos storagePosition;
     private String storageDimension = "";
     private boolean ticketsConfirmed;
+    private int configurationRevision;
 
     public WorkerEntity(EntityType<? extends WorkerEntity> type, Level level) {
         super(type, level);
@@ -88,7 +96,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     protected void registerGoals() {
-        // Worker movement is issued only by WorkerController for an active job.
+        // The worker receives movement only from WorkerController while a job is active.
     }
 
     @Override
@@ -123,6 +131,14 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         return job;
     }
 
+    public WorkerBlockReason blockReason() {
+        return blockReason;
+    }
+
+    public WorkerActivity activity() {
+        return workerController.activity();
+    }
+
     public Optional<ResourceLocation> targetBlockId() {
         return Optional.ofNullable(targetBlockId);
     }
@@ -133,6 +149,10 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     public Optional<BlockPos> storagePosition() {
         return Optional.ofNullable(storagePosition);
+    }
+
+    public String storageDimension() {
+        return storageDimension;
     }
 
     public boolean storageIsIn(ServerLevel level) {
@@ -152,28 +172,151 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         return cargoUpgrades;
     }
 
+    public int configurationRevision() {
+        return configurationRevision;
+    }
+
     public int workerTicketCount() {
         return ticketsConfirmed ? workerTicketChunks.size() : 0;
     }
 
-    public void beginCollection(ResourceLocation blockId, BlockPos origin) {
+    public int inventoryUsedSlots() {
+        int used = 0;
+        for (int slot = 0; slot < getContainerSize(); slot++) {
+            if (!items.get(slot).isEmpty()) {
+                used++;
+            }
+        }
+        return used;
+    }
+
+    public int inventoryItemCount() {
+        int count = 0;
+        for (int slot = 0; slot < getContainerSize(); slot++) {
+            count += items.get(slot).getCount();
+        }
+        return count;
+    }
+
+    public Optional<BlockPos> currentTarget() {
+        return workerController.currentTarget();
+    }
+
+    public Optional<BlockPos> currentWorkPosition() {
+        return workerController.currentWorkPosition();
+    }
+
+    public int replanAttempts() {
+        return workerController.replanAttempts();
+    }
+
+    public int lastProgressAgeTicks() {
+        return workerController.lastProgressAgeTicks();
+    }
+
+    /**
+     * Updates the configured target without starting work. The previous implicit
+     * start behavior made it impossible to distinguish configuration from execution.
+     */
+    public Optional<ResourceLocation> configureTarget(ResourceLocation blockId, BlockPos origin) {
+        Optional<ResourceLocation> previous = Optional.ofNullable(targetBlockId);
         targetBlockId = blockId;
         jobOrigin = origin.immutable();
         exclusions.remove(blockId);
-        job = WorkerJob.COLLECT;
-        resumeJob = WorkerJob.COLLECT;
+        job = WorkerJob.READY;
+        blockReason = WorkerBlockReason.NONE;
+        configurationRevision++;
         workerController.resetTransientState();
+        releaseWorkerTickets();
         setChanged();
+        return previous;
+    }
+
+    /**
+     * Compatibility helper for internal tests and older integrations. New player
+     * controls call configureTarget and startJob separately.
+     */
+    public void beginCollection(ResourceLocation blockId, BlockPos origin) {
+        configureTarget(blockId, origin);
+        startJob();
+    }
+
+    public WorkerActionResult startJob() {
+        if (targetBlockId == null) {
+            job = WorkerJob.IDLE;
+            blockReason = WorkerBlockReason.NO_TARGET;
+            workerController.resetTransientState();
+            releaseWorkerTickets();
+            setChanged();
+            return WorkerActionResult.NO_TARGET;
+        }
+        if (exclusions.contains(targetBlockId)) {
+            job = WorkerJob.READY;
+            blockReason = WorkerBlockReason.TARGET_EXCLUDED;
+            workerController.resetTransientState();
+            releaseWorkerTickets();
+            setChanged();
+            return WorkerActionResult.TARGET_EXCLUDED;
+        }
+        if (job.activelyWorks()) {
+            return WorkerActionResult.ALREADY_RUNNING;
+        }
+
+        job = WorkerJob.COLLECT;
+        blockReason = WorkerBlockReason.NONE;
+        configurationRevision++;
+        workerController.resetTransientState();
+        ensureWorkerTickets();
+        setChanged();
+        return WorkerActionResult.STARTED;
+    }
+
+    public WorkerActionResult stopJob() {
+        boolean wasRunning = job.activelyWorks() || job == WorkerJob.BLOCKED;
+        job = targetBlockId == null ? WorkerJob.IDLE : WorkerJob.READY;
+        blockReason = WorkerBlockReason.NONE;
+        configurationRevision++;
+        workerController.resetTransientState();
+        releaseWorkerTickets();
+        setChanged();
+        return wasRunning ? WorkerActionResult.STOPPED : WorkerActionResult.ALREADY_STOPPED;
+    }
+
+    public WorkerActionResult clearTarget() {
+        targetBlockId = null;
+        job = WorkerJob.IDLE;
+        blockReason = WorkerBlockReason.NONE;
+        configurationRevision++;
+        workerController.resetTransientState();
+        releaseWorkerTickets();
+        setChanged();
+        return WorkerActionResult.TARGET_CLEARED;
     }
 
     public void assignStorage(ServerLevel level, BlockPos position) {
         storageDimension = level.dimension().location().toString();
         storagePosition = position.immutable();
-        if (job == WorkerJob.BLOCKED && targetBlockId != null) {
-            job = WorkerJob.COLLECT;
+        if (job == WorkerJob.BLOCKED) {
+            job = targetBlockId == null ? WorkerJob.IDLE : WorkerJob.READY;
+            blockReason = WorkerBlockReason.NONE;
         }
+        configurationRevision++;
         workerController.resetTransientState();
         setChanged();
+    }
+
+    public boolean clearStorage() {
+        boolean hadStorage = storagePosition != null || !storageDimension.isBlank();
+        storagePosition = null;
+        storageDimension = "";
+        configurationRevision++;
+        if (job == WorkerJob.DEPOSIT) {
+            markBlocked(WorkerBlockReason.STORAGE_MISSING);
+        } else {
+            workerController.resetTransientState();
+            setChanged();
+        }
+        return hadStorage;
     }
 
     public boolean toggleExclusion(ResourceLocation blockId) {
@@ -184,50 +327,84 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             exclusions.add(blockId);
             excluded = true;
             if (blockId.equals(targetBlockId)) {
-                job = WorkerJob.IDLE;
                 targetBlockId = null;
+                job = WorkerJob.IDLE;
+                blockReason = WorkerBlockReason.NONE;
+                releaseWorkerTickets();
             }
         }
+        configurationRevision++;
         workerController.resetTransientState();
         setChanged();
         return excluded;
     }
 
-    public WorkerJob togglePaused() {
-        if (job == WorkerJob.PAUSED) {
-            job = resumeJob.resumableFallback();
+    public void markCollecting() {
+        if (targetBlockId == null) {
+            job = WorkerJob.IDLE;
+            blockReason = WorkerBlockReason.NO_TARGET;
         } else {
-            resumeJob = job.resumableFallback();
-            job = WorkerJob.PAUSED;
+            job = WorkerJob.COLLECT;
+            blockReason = WorkerBlockReason.NONE;
         }
-        workerController.resetTransientState();
         setChanged();
-        return job;
     }
 
-    public void markCollecting() {
-        job = WorkerJob.COLLECT;
-        resumeJob = WorkerJob.COLLECT;
+    public void markBlocked(WorkerBlockReason reason) {
+        boolean changed = job != WorkerJob.BLOCKED || blockReason != reason;
+        job = WorkerJob.BLOCKED;
+        blockReason = reason;
+        getNavigation().stop();
         setChanged();
+        if (changed) {
+            notifyOwner(
+                    ChatFormatting.RED,
+                    "message.baritonehelper.blocked",
+                    Component.translatable(reason.translationKey()));
+        }
     }
 
     public void markBlocked() {
-        if (job.activelyWorks()) {
-            resumeJob = job;
-        }
-        job = WorkerJob.BLOCKED;
-        getNavigation().stop();
-        setChanged();
+        markBlocked(WorkerBlockReason.NAVIGATION_FAILED);
     }
 
     public void requestDepositOrBlock() {
         if (storagePosition != null && !storageDimension.isBlank()) {
             job = WorkerJob.DEPOSIT;
-            resumeJob = WorkerJob.DEPOSIT;
+            blockReason = WorkerBlockReason.NONE;
         } else {
-            markBlocked();
+            markBlocked(WorkerBlockReason.INVENTORY_FULL_NO_STORAGE);
         }
         setChanged();
+    }
+
+    public void notifyOwner(
+            ChatFormatting formatting,
+            String translationKey,
+            Object... arguments) {
+        if (!(level() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        UUID ownerId = getOwnerUUID();
+        if (ownerId == null) {
+            return;
+        }
+        ServerPlayer owner = serverLevel.getServer().getPlayerList().getPlayer(ownerId);
+        if (owner != null) {
+            WorkerMessages.send(owner, formatting, translationKey, arguments);
+        }
+    }
+
+    public void openDashboard(ServerPlayer player) {
+        if (!isOwnedByPlayer(player) || player.level() != level()) {
+            return;
+        }
+        player.openMenu(
+                new SimpleMenuProvider(
+                        (containerId, playerInventory, ignored) ->
+                                new WorkerDashboardMenu(containerId, playerInventory, this),
+                        Component.translatable("menu.baritonehelper.worker_dashboard")),
+                buffer -> buffer.writeVarInt(getId()));
     }
 
     public void ensureWorkerTickets() {
@@ -292,6 +469,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             desired.add(new ChunkPos(storagePosition).toLong());
         }
         workerController.currentTarget().ifPresent(target ->
+                desired.add(new ChunkPos(target).toLong()));
+        workerController.currentWorkPosition().ifPresent(target ->
                 desired.add(new ChunkPos(target).toLong()));
         return desired;
     }
@@ -358,20 +537,29 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 cargoUpgrades = 1;
                 held.consume(1, player);
                 setChanged();
-                player.displayClientMessage(
-                        Component.translatable("message.baritonehelper.cargo_installed"),
-                        true);
-            } else {
-                player.displayClientMessage(
-                        Component.translatable("message.baritonehelper.cargo_max"),
-                        true);
+                if (player instanceof ServerPlayer serverPlayer) {
+                    WorkerMessages.send(
+                            serverPlayer,
+                            ChatFormatting.GREEN,
+                            "message.baritonehelper.cargo_installed");
+                }
+            } else if (player instanceof ServerPlayer serverPlayer) {
+                WorkerMessages.send(
+                        serverPlayer,
+                        ChatFormatting.YELLOW,
+                        "message.baritonehelper.cargo_max");
             }
             return InteractionResult.SUCCESS;
         }
 
-        if (held.is(BaritoneHelper.WORKER_CONTROLLER.get())
-                && player instanceof ServerPlayer serverPlayer) {
-            serverPlayer.openMenu(this);
+        if (player instanceof ServerPlayer serverPlayer) {
+            if (held.is(BaritoneHelper.WORKER_CONTROLLER.get())) {
+                openDashboard(serverPlayer);
+            } else if (held.isEmpty()) {
+                serverPlayer.openMenu(this);
+            } else {
+                return InteractionResult.PASS;
+            }
             return InteractionResult.SUCCESS;
         }
 
@@ -381,12 +569,17 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     private void dismiss(Player player) {
         if (player instanceof ServerPlayer serverPlayer) {
             serverPlayer.getData(BaritoneHelper.ACTIVE_WORKER).clear();
+            WorkerMessages.send(
+                    serverPlayer,
+                    ChatFormatting.GREEN,
+                    "message.baritonehelper.dismissed");
         }
 
+        stopJob();
         releaseInventoryOnce();
-        ItemStack workerItem = new ItemStack(BaritoneHelper.BARITONE_HELPER.get());
-        if (!player.getInventory().add(workerItem)) {
-            player.drop(workerItem, false);
+        ItemStack helperItem = new ItemStack(BaritoneHelper.BARITONE_HELPER.get());
+        if (!player.getInventory().add(helperItem)) {
+            player.drop(helperItem, false);
         }
 
         releaseWorkerTickets();
@@ -473,6 +666,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     public void setChanged() {
+        // Entity NBT is saved by the normal entity persistence lifecycle.
     }
 
     @Override
@@ -514,7 +708,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         ContainerHelper.saveAllItems(tag, items, level().registryAccess());
         tag.putInt("CargoUpgrades", cargoUpgrades);
         tag.putString("WorkerJob", job.name());
-        tag.putString("ResumeJob", resumeJob.name());
+        tag.putString("BlockReason", blockReason.name());
+        tag.putInt("ConfigurationRevision", configurationRevision);
         if (targetBlockId != null) {
             tag.putString("TargetBlock", targetBlockId.toString());
         }
@@ -541,8 +736,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
         cargoUpgrades = Math.max(0, Math.min(1, tag.getInt("CargoUpgrades")));
         job = WorkerJob.fromSerialized(tag.getString("WorkerJob"));
-        resumeJob = WorkerJob.fromSerialized(tag.getString("ResumeJob"))
-                .resumableFallback();
+        blockReason = WorkerBlockReason.fromSerialized(tag.getString("BlockReason"));
+        configurationRevision = Math.max(0, tag.getInt("ConfigurationRevision"));
 
         targetBlockId = tag.contains("TargetBlock", Tag.TAG_STRING)
                 ? ResourceLocation.tryParse(tag.getString("TargetBlock"))
@@ -563,6 +758,11 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             if (id != null) {
                 exclusions.add(id);
             }
+        }
+
+        if (targetBlockId == null && job != WorkerJob.IDLE) {
+            job = WorkerJob.IDLE;
+            blockReason = WorkerBlockReason.NO_TARGET;
         }
 
         workerTicketChunks.clear();

@@ -4,54 +4,145 @@ import dev.dudie.baritonehelper.entity.WorkerEntity;
 import java.util.Optional;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 public final class WorkerPlanner {
     public static final int HORIZONTAL_RANGE = 16;
     public static final int VERTICAL_RANGE = 8;
+    private static final double CURRENT_POSITION_DISTANCE_SQUARED = 2.25;
 
     private WorkerPlanner() {
     }
 
-    public static Optional<BlockPos> nearestCollectable(
+    public record CollectionPlan(BlockPos target, BlockPos workPosition) {
+        public CollectionPlan {
+            target = target.immutable();
+            workPosition = workPosition.immutable();
+        }
+    }
+
+    public static Optional<CollectionPlan> nearestCollectable(
             ServerLevel level,
             WorkerEntity worker,
             Set<Long> temporarilyRejected) {
-        ResourceLocation target = worker.targetBlockId().orElse(null);
-        if (target == null || worker.isExcluded(target)) {
+        ResourceLocation targetId = worker.targetBlockId().orElse(null);
+        if (targetId == null || worker.isExcluded(targetId)) {
             return Optional.empty();
         }
 
         BlockPos origin = worker.jobOrigin();
-        BlockPos best = null;
+        if (!temporarilyRejected.contains(origin.asLong())
+                && isCollectable(level, worker, origin, targetId)) {
+            Optional<BlockPos> workPosition = nearestWorkPosition(level, worker, origin);
+            if (workPosition.isPresent()) {
+                return Optional.of(new CollectionPlan(origin, workPosition.orElseThrow()));
+            }
+        }
+
+        CollectionPlan best = null;
         double bestDistance = Double.MAX_VALUE;
 
         for (int y = origin.getY() - VERTICAL_RANGE; y <= origin.getY() + VERTICAL_RANGE; y++) {
             for (int x = origin.getX() - HORIZONTAL_RANGE; x <= origin.getX() + HORIZONTAL_RANGE; x++) {
                 for (int z = origin.getZ() - HORIZONTAL_RANGE; z <= origin.getZ() + HORIZONTAL_RANGE; z++) {
                     BlockPos candidate = new BlockPos(x, y, z);
-                    if (temporarilyRejected.contains(candidate.asLong()) || !level.hasChunkAt(candidate)) {
+                    if (temporarilyRejected.contains(candidate.asLong())
+                            || !isCollectable(level, worker, candidate, targetId)) {
                         continue;
                     }
-                    if (!isCollectable(level, worker, candidate, target)) {
+
+                    BlockPos workPosition = nearestWorkPosition(level, worker, candidate)
+                            .orElse(null);
+                    if (workPosition == null) {
                         continue;
                     }
 
                     double distance = worker.distanceToSqr(
-                            candidate.getX() + 0.5,
-                            candidate.getY() + 0.5,
-                            candidate.getZ() + 0.5);
+                            workPosition.getX() + 0.5,
+                            workPosition.getY(),
+                            workPosition.getZ() + 0.5);
                     if (distance < bestDistance) {
-                        best = candidate;
+                        best = new CollectionPlan(candidate, workPosition);
                         bestDistance = distance;
                     }
                 }
             }
         }
         return Optional.ofNullable(best);
+    }
+
+    public static Optional<BlockPos> nearestWorkPosition(
+            ServerLevel level,
+            WorkerEntity worker,
+            BlockPos target) {
+        double targetDistance = worker.distanceToSqr(
+                target.getX() + 0.5,
+                target.getY() + 0.5,
+                target.getZ() + 0.5);
+        boolean closeContainer = level.getBlockEntity(target) instanceof Container;
+        if (targetDistance <= CURRENT_POSITION_DISTANCE_SQUARED
+                && (closeContainer || hasLineOfSight(level, worker, target))) {
+            // The worker is already in a valid interaction position. Do not reject
+            // this merely because its live bounding box overlaps the candidate box.
+            return Optional.of(worker.blockPosition().immutable());
+        }
+
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            BlockPos candidate = target.relative(direction);
+            if (!canStandAt(level, candidate)) {
+                continue;
+            }
+            double distance = worker.distanceToSqr(
+                    candidate.getX() + 0.5,
+                    candidate.getY(),
+                    candidate.getZ() + 0.5);
+            if (distance < bestDistance) {
+                best = candidate.immutable();
+                bestDistance = distance;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    public static boolean canStandAt(ServerLevel level, BlockPos feet) {
+        if (!level.hasChunkAt(feet)
+                || !level.hasChunkAt(feet.above())
+                || !level.hasChunkAt(feet.below())) {
+            return false;
+        }
+
+        BlockState feetState = level.getBlockState(feet);
+        BlockState headState = level.getBlockState(feet.above());
+        BlockPos floorPos = feet.below();
+        BlockState floorState = level.getBlockState(floorPos);
+        return feetState.getCollisionShape(level, feet).isEmpty()
+                && headState.getCollisionShape(level, feet.above()).isEmpty()
+                && floorState.isFaceSturdy(level, floorPos, Direction.UP);
+    }
+
+    public static boolean hasLineOfSight(
+            ServerLevel level,
+            WorkerEntity worker,
+            BlockPos target) {
+        BlockHitResult hit = level.clip(new ClipContext(
+                worker.getEyePosition(),
+                Vec3.atCenterOf(target),
+                ClipContext.Block.OUTLINE,
+                ClipContext.Fluid.NONE,
+                worker));
+        return hit.getType() == HitResult.Type.BLOCK
+                && hit.getBlockPos().equals(target);
     }
 
     public static boolean isCollectable(

@@ -10,11 +10,11 @@ displayName="${mod_name}"
 displayURL="https://github.com/Dudiebug/BuddyBot-NeoForge"
 authors="Dudiebug"
 description='''
-Baritone Helper adds one persistent, owner-bound collector. Configure it with
-the Worker Controller to collect a block type, deposit into assigned storage,
-and continue working while its owner is offline. Baritone Helper is
-invulnerable, non-targetable, non-combatant, and never follows or teleports to
-its owner.
+Baritone Helper adds one persistent, owner-bound, invulnerable resource
+collector. Configure or replace its block target, assign storage, and use the
+server-authoritative controller dashboard to explicitly start, stop, inspect,
+and troubleshoot collection. The helper can continue active jobs while its
+owner is offline, but never fights, follows, or teleports to its owner.
 '''
 
 [[dependencies.${mod_id}]]

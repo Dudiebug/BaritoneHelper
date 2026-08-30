@@ -3,14 +3,17 @@ package dev.dudie.baritonehelper;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
 import dev.dudie.baritonehelper.item.WorkerControllerItem;
 import dev.dudie.baritonehelper.item.WorkerItem;
+import dev.dudie.baritonehelper.menu.WorkerDashboardMenu;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.common.extensions.IMenuTypeExtension;
 import net.neoforged.neoforge.common.world.chunk.RegisterTicketControllersEvent;
 import net.neoforged.neoforge.common.world.chunk.TicketController;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
@@ -30,6 +33,8 @@ public final class BaritoneHelper {
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(MOD_ID);
     private static final DeferredRegister.Items LEGACY_ITEMS =
             DeferredRegister.createItems(LEGACY_NAMESPACE);
+    public static final DeferredRegister<MenuType<?>> MENUS =
+            DeferredRegister.create(Registries.MENU, MOD_ID);
     public static final DeferredRegister<net.neoforged.neoforge.attachment.AttachmentType<?>> ATTACHMENTS =
             DeferredRegister.create(
                     net.neoforged.neoforge.registries.NeoForgeRegistries.Keys.ATTACHMENT_TYPES,
@@ -72,6 +77,11 @@ public final class BaritoneHelper {
                     "cargo_upgrade",
                     () -> new Item(new Item.Properties().stacksTo(1)));
 
+    public static final DeferredHolder<MenuType<?>, MenuType<WorkerDashboardMenu>> WORKER_DASHBOARD =
+            MENUS.register(
+                    "worker_dashboard",
+                    () -> IMenuTypeExtension.create(WorkerDashboardMenu::new));
+
     public static final DeferredHolder<
             net.neoforged.neoforge.attachment.AttachmentType<?>,
             net.neoforged.neoforge.attachment.AttachmentType<ActiveWorkerData>> ACTIVE_WORKER =
@@ -91,6 +101,7 @@ public final class BaritoneHelper {
         LEGACY_ENTITIES.register(modBus);
         ITEMS.register(modBus);
         LEGACY_ITEMS.register(modBus);
+        MENUS.register(modBus);
         ATTACHMENTS.register(modBus);
         modBus.addListener(this::attributes);
         modBus.addListener(this::creativeTab);
