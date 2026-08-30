@@ -19,19 +19,35 @@ The implementation includes:
 - owner-controlled inventory access and dismissal; and
 - entity-owned NeoForge chunk tickets for offline work.
 
-## Automated checks
+## Automated verification
 
-The authoritative checks are:
+Verified implementation baseline:
+
+- Commit: `d113c523d0ec1ee34fbe2d6b039677e305dc188d`
+- GitHub Actions run: `33294843801`
+- Runtime: Temurin Java 21.0.12+1
+- Minecraft: 1.21.1
+- NeoForge: 21.1.248
+
+Commands completed successfully:
 
 ```sh
-./gradlew test
-./gradlew runGameTestServer
-./gradlew build
+./gradlew test --no-daemon --console=plain
+./gradlew runGameTestServer --no-daemon --console=plain
+./gradlew build --no-daemon --console=plain
 ```
 
-The repository workflow runs these commands with Java 21 on every push and pull
-request. A specific successful head commit and workflow run are recorded here
-only after the final naming and behavioral test pass completes.
+Results:
+
+- Six JUnit recipe, asset, namespace, and source-architecture contracts passed.
+- All 13 required NeoForge GameTests passed.
+- The release JAR built successfully as `baritonehelper-1.0.0.jar`.
+
+The GameTest suite verifies complete persistence without tier data, damage
+immunity, hostile-target rejection, no owner following or cross-dimension
+transfer, dismissal conservation and ticket cleanup, offline collection,
+deposit, full-storage failure, full-inventory conservation, exclusions, cargo
+limits, traversal, and unreachable-target watchdog behavior.
 
 ## Compatibility evidence
 
