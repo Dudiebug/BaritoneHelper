@@ -82,6 +82,11 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         setCustomNameVisible(false);
     }
 
+    public boolean isOwnedByPlayer(Player player) {
+        UUID ownerId = getOwnerUUID();
+        return ownerId != null && ownerId.equals(player.getUUID());
+    }
+
     @Override
     protected void registerGoals() {
         goalSelector.addGoal(0, new FloatGoal(this));
@@ -282,7 +287,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         if (job.activelyWorks()) {
             desired.add(new ChunkPos(jobOrigin).toLong());
         }
-        if (job == WorkerJob.DEPOSIT && storagePosition != null && storageIsIn((ServerLevel) level())) {
+        if (job == WorkerJob.DEPOSIT
+                && storagePosition != null
+                && storageIsIn((ServerLevel) level())) {
             desired.add(new ChunkPos(storagePosition).toLong());
         }
         workerController.currentTarget().ifPresent(target ->
@@ -333,7 +340,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     public InteractionResult mobInteract(Player player, InteractionHand hand) {
-        if (!isOwnedBy(player)) {
+        if (!isOwnedByPlayer(player)) {
             return InteractionResult.PASS;
         }
 
@@ -363,7 +370,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             return InteractionResult.SUCCESS;
         }
 
-        if (held.is(BaritoneHelper.WORKER_CONTROLLER.get()) && player instanceof ServerPlayer serverPlayer) {
+        if (held.is(BaritoneHelper.WORKER_CONTROLLER.get())
+                && player instanceof ServerPlayer serverPlayer) {
             serverPlayer.openMenu(this);
             return InteractionResult.SUCCESS;
         }
@@ -400,7 +408,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     public void remove(Entity.RemovalReason reason) {
-        if (reason == Entity.RemovalReason.KILLED || reason == Entity.RemovalReason.DISCARDED) {
+        if (reason == Entity.RemovalReason.KILLED
+                || reason == Entity.RemovalReason.DISCARDED) {
             releaseWorkerTickets();
         }
         super.remove(reason);
@@ -423,7 +432,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     public ItemStack getItem(int slot) {
-        return slot >= 0 && slot < getContainerSize() ? items.get(slot) : ItemStack.EMPTY;
+        return slot >= 0 && slot < getContainerSize()
+                ? items.get(slot)
+                : ItemStack.EMPTY;
     }
 
     @Override
@@ -467,7 +478,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     @Override
     public boolean stillValid(Player player) {
-        return isAlive() && isOwnedBy(player) && player.distanceToSqr(this) <= 64.0;
+        return isAlive()
+                && isOwnedByPlayer(player)
+                && player.distanceToSqr(this) <= 64.0;
     }
 
     @Override
@@ -488,7 +501,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             int containerId,
             Inventory playerInventory,
             Player player) {
-        if (!isOwnedBy(player)) {
+        if (!isOwnedByPlayer(player)) {
             return null;
         }
         return cargoUpgrades > 0
@@ -515,9 +528,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         ListTag excluded = new ListTag();
         exclusions.forEach(id -> excluded.add(StringTag.valueOf(id.toString())));
         tag.put("ExcludedBlocks", excluded);
-        tag.putLongArray("WorkerTicketChunks", workerTicketChunks.stream()
-                .mapToLong(Long::longValue)
-                .toArray());
+        tag.putLongArray(
+                "WorkerTicketChunks",
+                workerTicketChunks.stream().mapToLong(Long::longValue).toArray());
     }
 
     @Override
@@ -529,7 +542,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
         cargoUpgrades = Math.max(0, Math.min(1, tag.getInt("CargoUpgrades")));
         job = WorkerJob.fromSerialized(tag.getString("WorkerJob"));
-        resumeJob = WorkerJob.fromSerialized(tag.getString("ResumeJob")).resumableFallback();
+        resumeJob = WorkerJob.fromSerialized(tag.getString("ResumeJob"))
+                .resumableFallback();
 
         targetBlockId = tag.contains("TargetBlock", Tag.TAG_STRING)
                 ? ResourceLocation.tryParse(tag.getString("TargetBlock"))
