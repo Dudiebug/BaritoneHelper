@@ -1,0 +1,28 @@
+name: Export source snapshot
+
+on:
+  push:
+    branches:
+      - rewrite/real-baritone-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Package source
+        run: |
+          zip -qr BaritoneHelper-source.zip . \
+            -x '.git/*' 'build/*' '.gradle/*' 'run/*'
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: baritonehelper-source
+          path: BaritoneHelper-source.zip
+          if-no-files-found: error
+          retention-days: 1
