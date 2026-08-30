@@ -1,8 +1,6 @@
 package dev.dudie.baritonehelper.worker;
 
 import dev.dudie.baritonehelper.entity.WorkerEntity;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
@@ -10,13 +8,16 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 public final class WorkerPlanner {
     public static final int HORIZONTAL_RANGE = 16;
     public static final int VERTICAL_RANGE = 8;
+    private static final double INTERACTION_DISTANCE_SQUARED = 12.25;
 
     private WorkerPlanner() {
     }
@@ -74,20 +75,22 @@ public final class WorkerPlanner {
             ServerLevel level,
             WorkerEntity worker,
             BlockPos target) {
-        List<BlockPos> candidates = new ArrayList<>(9);
-        if (worker.blockPosition().distManhattan(target) <= 3) {
-            candidates.add(worker.blockPosition());
+        double targetDistance = worker.distanceToSqr(
+                target.getX() + 0.5,
+                target.getY() + 0.5,
+                target.getZ() + 0.5);
+        if (targetDistance <= INTERACTION_DISTANCE_SQUARED
+                && hasLineOfSight(level, worker, target)) {
+            // The live worker already occupies this valid interaction position.
+            // Do not reject it by collision-testing a box against itself.
+            return Optional.of(worker.blockPosition().immutable());
         }
-        for (Direction direction : Direction.Plane.HORIZONTAL) {
-            candidates.add(target.relative(direction));
-        }
-        candidates.add(target.above());
-        candidates.add(target.below());
 
         BlockPos best = null;
         double bestDistance = Double.MAX_VALUE;
-        for (BlockPos candidate : candidates) {
-            if (!canStandAt(level, worker, candidate)) {
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            BlockPos candidate = target.relative(direction);
+            if (!canStandAt(level, candidate)) {
                 continue;
             }
             double distance = worker.distanceToSqr(
@@ -102,10 +105,7 @@ public final class WorkerPlanner {
         return Optional.ofNullable(best);
     }
 
-    public static boolean canStandAt(
-            ServerLevel level,
-            WorkerEntity worker,
-            BlockPos feet) {
+    public static boolean canStandAt(ServerLevel level, BlockPos feet) {
         if (!level.hasChunkAt(feet)
                 || !level.hasChunkAt(feet.above())
                 || !level.hasChunkAt(feet.below())) {
@@ -116,20 +116,23 @@ public final class WorkerPlanner {
         BlockState headState = level.getBlockState(feet.above());
         BlockPos floorPos = feet.below();
         BlockState floorState = level.getBlockState(floorPos);
-        if (!feetState.getCollisionShape(level, feet).isEmpty()
-                || !headState.getCollisionShape(level, feet.above()).isEmpty()
-                || !floorState.isFaceSturdy(level, floorPos, Direction.UP)) {
-            return false;
-        }
+        return feetState.getCollisionShape(level, feet).isEmpty()
+                && headState.getCollisionShape(level, feet.above()).isEmpty()
+                && floorState.isFaceSturdy(level, floorPos, Direction.UP);
+    }
 
-        AABB currentBox = worker.getBoundingBox();
-        Vec3 destination = Vec3.atBottomCenterOf(feet);
-        Vec3 current = worker.position();
-        AABB destinationBox = currentBox.move(
-                destination.x - current.x,
-                destination.y - current.y,
-                destination.z - current.z);
-        return level.noCollision(worker, destinationBox);
+    public static boolean hasLineOfSight(
+            ServerLevel level,
+            WorkerEntity worker,
+            BlockPos target) {
+        BlockHitResult hit = level.clip(new ClipContext(
+                worker.getEyePosition(),
+                Vec3.atCenterOf(target),
+                ClipContext.Block.OUTLINE,
+                ClipContext.Fluid.NONE,
+                worker));
+        return hit.getType() == HitResult.Type.BLOCK
+                && hit.getBlockPos().equals(target);
     }
 
     public static boolean isCollectable(
