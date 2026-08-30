@@ -10,13 +10,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 public final class WorkerController {
@@ -181,10 +177,7 @@ public final class WorkerController {
 
         activity = WorkerActivity.PATHING;
         if (worker.getNavigation().isDone() || worker.tickCount % 20 == 0) {
-            if (!navigateTo(currentWorkPosition)) {
-                replanOrBlock(WorkerBlockReason.NO_REACHABLE_POSITION);
-                return;
-            }
+            navigateTo(currentWorkPosition);
         }
         watchProgress(distance, WorkerBlockReason.STUCK);
     }
@@ -266,10 +259,7 @@ public final class WorkerController {
                 || !canReach(level, storage)) {
             activity = WorkerActivity.RETURNING;
             if (worker.getNavigation().isDone() || worker.tickCount % 20 == 0) {
-                if (!navigateTo(currentWorkPosition)) {
-                    replanOrBlock(WorkerBlockReason.NO_REACHABLE_POSITION);
-                    return;
-                }
+                navigateTo(currentWorkPosition);
             }
             watchProgress(distance, WorkerBlockReason.STUCK);
             return;
@@ -292,40 +282,43 @@ public final class WorkerController {
         }
     }
 
-    private boolean navigateTo(BlockPos destination) {
+    private void navigateTo(BlockPos destination) {
+        BlockPos navigationGoal = currentTarget != null ? currentTarget : destination;
         boolean started = worker.getNavigation().moveTo(
-                destination.getX() + 0.5,
-                destination.getY(),
-                destination.getZ() + 0.5,
+                navigationGoal.getX() + 0.5,
+                navigationGoal.getY(),
+                navigationGoal.getZ() + 0.5,
                 1.0);
-        if (!started && currentTarget != null && !currentTarget.equals(destination)) {
-            // Vanilla ground navigation can occasionally reject an otherwise open
-            // adjacent node. Pathing toward the solid target makes vanilla stop at
-            // the nearest legal adjacent node instead of leaving the worker idle.
+
+        if (!started && !navigationGoal.equals(destination)) {
             started = worker.getNavigation().moveTo(
-                    currentTarget.getX() + 0.5,
-                    currentTarget.getY(),
-                    currentTarget.getZ() + 0.5,
+                    destination.getX() + 0.5,
+                    destination.getY(),
+                    destination.getZ() + 0.5,
                     1.0);
         }
-        return started;
+
+        if (!started) {
+            // Some vanilla path evaluators reject short, valid approaches to solid
+            // target blocks. MoveControl is a collision-respecting fallback; the
+            // watchdog and line-of-sight checks still prevent mining through walls.
+            worker.getMoveControl().setWantedPosition(
+                    destination.getX() + 0.5,
+                    destination.getY(),
+                    destination.getZ() + 0.5,
+                    1.0);
+        }
     }
 
     private boolean canReach(ServerLevel level, BlockPos target) {
-        if (level.getBlockEntity(target) instanceof Container
-                && distanceTo(target) <= ARRIVAL_DISTANCE_SQUARED) {
-            // Containers directly beside or below the worker are physically
-            // reachable even when their partial collision shape confuses the ray.
+        if (worker.blockPosition().distManhattan(target) <= 1) {
             return true;
         }
-        BlockHitResult hit = level.clip(new ClipContext(
-                worker.getEyePosition(),
-                Vec3.atCenterOf(target),
-                ClipContext.Block.OUTLINE,
-                ClipContext.Fluid.NONE,
-                worker));
-        return hit.getType() == HitResult.Type.BLOCK
-                && hit.getBlockPos().equals(target);
+        if (level.getBlockEntity(target) instanceof Container
+                && distanceTo(target) <= ARRIVAL_DISTANCE_SQUARED) {
+            return true;
+        }
+        return WorkerPlanner.hasLineOfSight(level, worker, target);
     }
 
     private double distanceTo(BlockPos position) {
