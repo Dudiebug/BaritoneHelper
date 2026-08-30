@@ -56,7 +56,7 @@ class RecipeAndAssetContractTest {
         assertTrue(combined.contains("\"id\": \"baritonehelper:baritone_helper\""));
         assertTrue(combined.contains("\"id\": \"baritonehelper:worker_controller\""));
         assertTrue(combined.contains("\"id\": \"baritonehelper:cargo_upgrade\""));
-        assertFalse(combined.contains("baritonehelper:worker"));
+        assertFalse(combined.contains("\"id\": \"baritonehelper:worker\""));
         assertFalse(combined.contains("buddy_bot_mk2"));
         assertFalse(combined.contains("buddy_bot_mk3"));
     }
