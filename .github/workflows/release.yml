@@ -2,26 +2,26 @@ name: Release Baritone Helper
 
 on:
   push:
-    branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag
+        description: Release tag (must match v2.0.0)
         required: true
-        default: v1.0.0
+        default: v2.0.0
 
 permissions:
   contents: write
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release v1.0.0'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout verified release source
+      - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
-          ref: 0948e83e330976b3935ba1f7f4826477c479a241
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Setup JDK 21
         uses: actions/setup-java@v4
@@ -32,58 +32,28 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build release jar
-        run: ./gradlew build --no-daemon --console=plain
+      - name: Verify unit contracts
+        run: ./gradlew clean test --no-daemon --console=plain
 
-      - name: Write release notes
+      - name: Verify NeoForge GameTests
+        run: ./gradlew runGameTestServer --no-daemon --console=plain
+
+      - name: Build and verify v2 artifact
         run: |
-          cat > release-notes.md <<'EOF'
-          # Baritone Helper 1.0.0
-
-          First collector-only release of Baritone Helper for **Minecraft 1.21.1 / NeoForge 21.1.x**.
-
-          ## Highlights
-
-          - Replaces the old BuddyBot rescue companion with one dedicated, invulnerable resource collector.
-          - Removes tiers, combat, threat detection, rescue behavior, owner following, and cross-dimension teleporting.
-          - Adds persistent inventory, cargo upgrades, collection jobs, assigned storage, exclusions, and offline worker chunk tickets.
-          - Adds a server-authoritative controller dashboard with explicit **Start Job**, **Stop Job**, **Clear Target**, **Clear Storage**, and **Inventory** controls.
-          - Target selection now reliably replaces the previous target instead of being blocked by a placeholder goal.
-          - Adds visible chat acknowledgements and exact failure/blocking reasons for controller actions.
-          - Repairs navigation so the helper paths to legal interaction positions beside resources rather than trying to path into solid blocks.
-          - Preserves item conservation, storage-failure safety, watchdog recovery, owner dismissal, and ticket cleanup.
-
-          ## Requirements
-
-          - Minecraft 1.21.1
-          - NeoForge 21.1.248 or newer in the 21.1 line
-          - Java 21
-          - Install the mod on both the server and connecting clients
-
-          ## Verification
-
-          The release source passed:
-
-          - `./gradlew test`
-          - `./gradlew runGameTestServer` — all 17 required GameTests
-          - `./gradlew build`
-
-          Release source commit: `0948e83e330976b3935ba1f7f4826477c479a241`
-          EOF
+          ./gradlew build --no-daemon --console=plain
+          test "$(grep '^mod_version=' gradle.properties | cut -d= -f2)" = "2.0.0"
+          test -f build/libs/baritonehelper-2.0.0.jar
+          test -f build/libs/baritonehelper-2.0.0-sources.jar
+          test "$(find build/libs -maxdepth 1 -type f -name 'baritonehelper-2.0.0.jar' | wc -l)" = 1
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ github.event.inputs.tag || 'v1.0.0' }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; uploading/replacing asset only."
-            gh release upload "$TAG" build/libs/baritonehelper-1.0.0.jar --clobber
-          else
-            gh release create "$TAG" \
-              build/libs/baritonehelper-1.0.0.jar \
-              --target 0948e83e330976b3935ba1f7f4826477c479a241 \
-              --title "Baritone Helper 1.0.0" \
-              --notes-file release-notes.md \
-              --latest
-          fi
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$TAG" \
+            build/libs/baritonehelper-2.0.0.jar \
+            build/libs/baritonehelper-2.0.0-sources.jar \
+            --title "Baritone Helper $TAG" \
+            --generate-notes \
+            --latest

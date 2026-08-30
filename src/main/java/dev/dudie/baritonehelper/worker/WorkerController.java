@@ -2,42 +2,45 @@ package dev.dudie.baritonehelper.worker;
 
 import dev.dudie.baritonehelper.entity.WorkerEntity;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameRules;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import org.jetbrains.annotations.Nullable;
+import net.minecraft.world.level.block.state.BlockState;
 
+/**
+ * Collector state machine.  Movement is delegated to the embedded Baritone
+ * engine; this class only reserves targets, applies policy, and drives the
+ * real interaction adapter.
+ */
 public final class WorkerController {
-    private static final int SCAN_INTERVAL_TICKS = 30;
-    private static final int ACTION_INTERVAL_TICKS = 10;
     private static final int WATCHDOG_TICKS = 120;
     private static final int REJECTED_TARGET_TICKS = 160;
     private static final int MAX_REPLAN_ATTEMPTS = 3;
     private static final int MAX_EMPTY_SCANS = 10;
+    private static final int SEARCH_BLOCK_BUDGET = 4_096;
     private static final double ARRIVAL_DISTANCE_SQUARED = 2.25;
-    private static final double INTERACTION_DISTANCE_SQUARED = 12.25;
-    private static final ItemStack WORK_TOOL = new ItemStack(Items.NETHERITE_PICKAXE);
+    private static final double INTERACTION_DISTANCE_SQUARED = 36.0;
 
     private final WorkerEntity worker;
     private final Map<Long, Integer> temporarilyRejected = new HashMap<>();
-    private @Nullable BlockPos currentTarget;
-    private @Nullable BlockPos currentWorkPosition;
+    private @org.jetbrains.annotations.Nullable BlockPos currentTarget;
+    private @org.jetbrains.annotations.Nullable BlockPos currentWorkPosition;
+    private @org.jetbrains.annotations.Nullable WorkerPlanner.SearchCursor searchCursor;
     private WorkerActivity activity = WorkerActivity.IDLE;
     private int scanCooldown;
-    private int actionCooldown;
     private int watchdogTicks;
     private int replanAttempts;
     private int emptyScans;
     private int lastProgressAgeTicks;
+    private int pendingDropTicks;
     private double bestDistance = Double.MAX_VALUE;
+    private int chunksExamined;
+    private boolean pathRequested;
+    private boolean closeInteractionFallback;
 
     public WorkerController(WorkerEntity worker) {
         this.worker = worker;
@@ -45,18 +48,12 @@ public final class WorkerController {
 
     public void tick(ServerLevel level) {
         tickRejectedTargets();
-
-        if (scanCooldown > 0) {
-            scanCooldown--;
-        }
-        if (actionCooldown > 0) {
-            actionCooldown--;
-        }
-
+        if (scanCooldown > 0) scanCooldown--;
         if (!worker.job().activelyWorks()) {
             activity = switch (worker.job()) {
                 case READY -> WorkerActivity.READY;
                 case BLOCKED -> WorkerActivity.BLOCKED;
+                case COMPLETED -> WorkerActivity.IDLE;
                 default -> WorkerActivity.IDLE;
             };
             clearPlan(false);
@@ -66,266 +63,239 @@ public final class WorkerController {
 
         worker.ensureWorkerTickets();
         lastProgressAgeTicks = Math.min(lastProgressAgeTicks + 1, Integer.MAX_VALUE - 1);
-
-        switch (worker.job()) {
-            case COLLECT -> tickCollection(level);
-            case DEPOSIT -> tickDeposit(level);
-            case IDLE, READY, BLOCKED -> {
-                // Handled before the active-job switch.
-            }
-        }
+        if (worker.job() == WorkerJob.COLLECT) tickCollection(level);
+        else if (worker.job() == WorkerJob.DEPOSIT) tickDeposit(level);
     }
 
-    public Optional<BlockPos> currentTarget() {
-        return Optional.ofNullable(currentTarget);
-    }
-
-    public Optional<BlockPos> currentWorkPosition() {
-        return Optional.ofNullable(currentWorkPosition);
-    }
-
-    public WorkerActivity activity() {
-        return activity;
-    }
-
-    public int replanAttempts() {
-        return replanAttempts;
-    }
-
-    public int lastProgressAgeTicks() {
-        return lastProgressAgeTicks;
-    }
+    public Optional<BlockPos> currentTarget() { return Optional.ofNullable(currentTarget); }
+    public Optional<BlockPos> currentWorkPosition() { return Optional.ofNullable(currentWorkPosition); }
+    public WorkerActivity activity() { return activity; }
+    public int replanAttempts() { return replanAttempts; }
+    public int lastProgressAgeTicks() { return lastProgressAgeTicks; }
+    public int chunksExamined() { return chunksExamined; }
 
     public void resetTransientState() {
+        worker.stopEngineProcesses();
         currentTarget = null;
         currentWorkPosition = null;
+        searchCursor = null;
         scanCooldown = 0;
-        actionCooldown = 0;
         watchdogTicks = 0;
         replanAttempts = 0;
         emptyScans = 0;
+        pendingDropTicks = 0;
         lastProgressAgeTicks = 0;
         bestDistance = Double.MAX_VALUE;
+        chunksExamined = 0;
+        pathRequested = false;
+        closeInteractionFallback = false;
         temporarilyRejected.clear();
-        worker.getNavigation().stop();
         activity = switch (worker.job()) {
             case READY -> WorkerActivity.READY;
             case COLLECT -> WorkerActivity.SEARCHING;
             case DEPOSIT -> WorkerActivity.RETURNING;
             case BLOCKED -> WorkerActivity.BLOCKED;
-            default -> WorkerActivity.IDLE;
+            case COMPLETED, IDLE -> WorkerActivity.IDLE;
         };
     }
 
     private void tickCollection(ServerLevel level) {
-        var targetBlockId = worker.targetBlockId().orElse(null);
-        if (targetBlockId == null) {
+        var targetId = worker.targetBlockId().orElse(null);
+        if (targetId == null) {
             block(WorkerBlockReason.NO_TARGET);
             return;
         }
-        if (worker.isExcluded(targetBlockId)) {
+        if (worker.isExcluded(targetId)) {
             block(WorkerBlockReason.TARGET_EXCLUDED);
             return;
         }
+        if (!worker.workAreaDimension().isBlank()
+                && !worker.workAreaDimension().equals(level.dimension().location().toString())) {
+            block(WorkerBlockReason.WORK_AREA_WRONG_DIMENSION);
+            return;
+        }
+        if (!worker.unlimitedCount() && worker.completedBlockCount() >= worker.requestedBlockCount()) {
+            finishGoal(level);
+            return;
+        }
 
-        if (currentTarget != null
-                && !WorkerPlanner.isCollectable(
-                        level, worker, currentTarget, targetBlockId)) {
+        if (pendingDropTicks > 0) {
+            activity = WorkerActivity.COLLECTING;
+            pendingDropTicks--;
+            if (pendingDropTicks == 0) {
+                currentTarget = null;
+                currentWorkPosition = null;
+                worker.setRuntimeState(WorkerRuntimeState.SEARCHING);
+            }
+            return;
+        }
+
+        if (currentTarget != null && !worker.isBreaking()
+                && !WorkerPlanner.isCollectable(level, worker, currentTarget, targetId)) {
+            worker.stopEngineProcesses();
             clearPlan(false);
         }
 
         if (currentTarget == null || currentWorkPosition == null) {
             activity = WorkerActivity.SEARCHING;
-            if (scanCooldown > 0) {
-                worker.getNavigation().stop();
-                return;
-            }
-
-            WorkerPlanner.CollectionPlan plan = WorkerPlanner.nearestCollectable(
-                    level, worker, temporarilyRejected.keySet()).orElse(null);
-            scanCooldown = SCAN_INTERVAL_TICKS;
-            watchdogTicks = 0;
-            bestDistance = Double.MAX_VALUE;
-            if (plan == null) {
-                emptyScans++;
-                worker.getNavigation().stop();
-                if (emptyScans >= MAX_EMPTY_SCANS) {
-                    block(WorkerBlockReason.NO_MATCHING_BLOCKS);
+            worker.setRuntimeState(WorkerRuntimeState.SEARCHING);
+            if (scanCooldown > 0) return;
+            if (searchCursor == null) searchCursor = new WorkerPlanner.SearchCursor(level, worker);
+            Optional<WorkerPlanner.CollectionPlan> plan = searchCursor.next(
+                    level, worker, temporarilyRejected.keySet(), SEARCH_BLOCK_BUDGET);
+            chunksExamined = searchCursor.chunksExamined();
+            scanCooldown = 0;
+            if (plan.isEmpty()) {
+                if (searchCursor.exhausted()) {
+                    emptyScans++;
+                    searchCursor = null;
+                    scanCooldown = 5;
+                    if (emptyScans >= MAX_EMPTY_SCANS) block(WorkerBlockReason.NO_MATCHING_BLOCKS);
                 }
                 return;
             }
-
             emptyScans = 0;
-            currentTarget = plan.target();
-            currentWorkPosition = plan.workPosition();
+            currentTarget = plan.orElseThrow().target();
+            currentWorkPosition = plan.orElseThrow().workPosition();
+            if (!worker.hasInventoryRoomFor(level.getBlockState(currentTarget))) {
+                worker.requestDepositOrBlock();
+                clearPlan(false);
+                return;
+            }
             activity = WorkerActivity.PATHING;
+            worker.setRuntimeState(WorkerRuntimeState.PATHING);
+            navigateTo(currentWorkPosition);
         }
 
+        if (currentTarget == null || currentWorkPosition == null) return;
         double distance = distanceTo(currentWorkPosition);
-        double targetDistance = distanceTo(currentTarget);
-        if (distance <= ARRIVAL_DISTANCE_SQUARED
-                && targetDistance <= INTERACTION_DISTANCE_SQUARED
-                && canReach(level, currentTarget)) {
-            activity = WorkerActivity.COLLECTING;
-            worker.getNavigation().stop();
-            if (actionCooldown == 0) {
-                collect(level, currentTarget);
-                actionCooldown = ACTION_INTERVAL_TICKS;
+        boolean canInteract = distance <= ARRIVAL_DISTANCE_SQUARED
+                && distanceTo(currentTarget) <= INTERACTION_DISTANCE_SQUARED
+                && WorkerPlanner.hasLineOfSight(level, worker, currentTarget);
+        if (canInteract) {
+            activity = WorkerActivity.BREAKING;
+            worker.setRuntimeState(WorkerRuntimeState.BREAKING);
+            if (!level.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) {
+                block(WorkerBlockReason.MOB_GRIEFING_DISABLED);
+                return;
+            }
+            BlockState state = level.getBlockState(currentTarget);
+            if (!worker.hasInventoryRoomFor(state)) {
+                worker.requestDepositOrBlock();
+                clearPlan(false);
+                return;
+            }
+            if (!worker.hasCorrectToolFor(currentTarget)) {
+                block(WorkerBlockReason.MISSING_REQUIRED_TOOL);
+                return;
+            }
+            if (worker.beginOrContinueBreaking(currentTarget)) {
+                worker.configuration().incrementCompleted();
+                replanAttempts = 0;
+                emptyScans = 0;
+                lastProgressAgeTicks = 0;
+                pendingDropTicks = 10;
+                activity = WorkerActivity.COLLECTING;
+                worker.setRuntimeState(WorkerRuntimeState.COLLECTING_DROPS);
+                worker.notifyOwner(ChatFormatting.GREEN, "message.baritonehelper.block_collected", worker.completedBlockCount());
+                if (!worker.unlimitedCount() && worker.completedBlockCount() >= worker.requestedBlockCount()) {
+                    // Drops are given a short real-world pickup window before
+                    // the finite job returns to storage.
+                    pendingDropTicks = 10;
+                }
             }
             return;
         }
 
         activity = WorkerActivity.PATHING;
-        if (worker.getNavigation().isDone() || worker.tickCount % 20 == 0) {
+        worker.setRuntimeState(WorkerRuntimeState.PATHING);
+        if (!pathRequested) {
             navigateTo(currentWorkPosition);
         }
         watchProgress(distance, WorkerBlockReason.STUCK);
     }
 
-    private void collect(ServerLevel level, BlockPos position) {
-        var targetId = worker.targetBlockId().orElse(null);
-        if (targetId == null
-                || !WorkerPlanner.isCollectable(level, worker, position, targetId)) {
-            clearPlan(false);
+    private void finishGoal(ServerLevel level) {
+        if (worker.hasCargo()) {
+            if (worker.storagePosition().isPresent()) {
+                worker.requestDepositOrBlock();
+                clearPlan(false);
+            } else {
+                block(WorkerBlockReason.STORAGE_MISSING);
+            }
             return;
         }
-
-        if (!level.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) {
-            block(WorkerBlockReason.MOB_GRIEFING_DISABLED);
-            return;
-        }
-
-        BlockEntity blockEntity = level.getBlockEntity(position);
-        var state = level.getBlockState(position);
-        List<ItemStack> drops = Block.getDrops(
-                state, level, position, blockEntity, worker, WORK_TOOL);
-        if (drops.isEmpty()) {
-            replanOrBlock(WorkerBlockReason.TARGET_HAS_NO_DROPS);
-            return;
-        }
-
-        if (!WorkerInventory.canFitAll(worker, drops)) {
-            worker.requestDepositOrBlock();
-            clearPlan(false);
-            return;
-        }
-
-        if (!level.destroyBlock(position, false, worker)) {
-            replanOrBlock(WorkerBlockReason.NAVIGATION_FAILED);
-            return;
-        }
-
-        WorkerInventory.insertAll(worker, drops);
-        replanAttempts = 0;
-        emptyScans = 0;
-        lastProgressAgeTicks = 0;
-        clearPlan(false);
-        activity = WorkerActivity.SEARCHING;
+        worker.stopEngineProcesses();
+        worker.markCompleted();
+        worker.releaseWorkerTickets();
+        activity = WorkerActivity.IDLE;
+        worker.setRuntimeState(WorkerRuntimeState.COMPLETED);
     }
 
     private void tickDeposit(ServerLevel level) {
         BlockPos storage = worker.storagePosition().orElse(null);
-        if (storage == null) {
+        if (storage == null) { block(WorkerBlockReason.STORAGE_MISSING); return; }
+        if (!worker.storageIsIn(level)) { block(WorkerBlockReason.STORAGE_WRONG_DIMENSION); return; }
+        if (worker.isInsideNoEnter(storage) || worker.isInsideNoModify(storage)) {
+            block(WorkerBlockReason.STORAGE_IN_NO_WORK_ZONE);
+            return;
+        }
+        if (!(level.getBlockEntity(storage) instanceof Container destination)) {
             block(WorkerBlockReason.STORAGE_MISSING);
             return;
         }
-        if (!worker.storageIsIn(level)) {
-            block(WorkerBlockReason.STORAGE_WRONG_DIMENSION);
-            return;
-        }
-
-        BlockEntity blockEntity = level.getBlockEntity(storage);
-        if (!(blockEntity instanceof Container destination)) {
-            block(WorkerBlockReason.STORAGE_MISSING);
-            return;
-        }
-
         if (currentTarget == null || !currentTarget.equals(storage)) {
             currentTarget = storage.immutable();
-            currentWorkPosition = WorkerPlanner.nearestWorkPosition(level, worker, storage)
-                    .orElse(null);
+            currentWorkPosition = WorkerPlanner.nearestWorkPosition(level, worker, storage).orElse(null);
+            if (currentWorkPosition == null && distanceTo(storage) <= INTERACTION_DISTANCE_SQUARED) {
+                // A loaded container can be inside a test encasement or a
+                // one-block alcove with no standable neighboring cell.  The
+                // entity is already within the server's interaction reach,
+                // so deposit in place rather than inventing a teleport.
+                currentWorkPosition = worker.blockPosition().immutable();
+                closeInteractionFallback = true;
+            }
             watchdogTicks = 0;
             bestDistance = Double.MAX_VALUE;
-            if (currentWorkPosition == null) {
-                block(WorkerBlockReason.NO_REACHABLE_POSITION);
-                return;
-            }
+            if (currentWorkPosition == null) { block(WorkerBlockReason.NO_REACHABLE_POSITION); return; }
         }
-
         double distance = distanceTo(currentWorkPosition);
-        double storageDistance = distanceTo(storage);
-        if (distance > ARRIVAL_DISTANCE_SQUARED
-                || storageDistance > INTERACTION_DISTANCE_SQUARED
-                || !canReach(level, storage)) {
+        if (distance > ARRIVAL_DISTANCE_SQUARED || distanceTo(storage) > INTERACTION_DISTANCE_SQUARED
+                || (!closeInteractionFallback && !WorkerPlanner.hasLineOfSight(level, worker, storage))) {
             activity = WorkerActivity.RETURNING;
-            if (worker.getNavigation().isDone() || worker.tickCount % 20 == 0) {
+            worker.setRuntimeState(WorkerRuntimeState.RETURNING_TO_STORAGE);
+            if (!pathRequested) {
                 navigateTo(currentWorkPosition);
             }
             watchProgress(distance, WorkerBlockReason.STUCK);
             return;
         }
-
         activity = WorkerActivity.DEPOSITING;
-        worker.getNavigation().stop();
+        worker.setRuntimeState(WorkerRuntimeState.DEPOSITING);
         int moved = WorkerStorage.deposit(worker, destination);
-        if (worker.isEmpty()) {
-            if (moved > 0) {
-                worker.notifyOwner(
-                        net.minecraft.ChatFormatting.GREEN,
-                        "message.baritonehelper.deposited",
-                        moved);
+        if (!worker.hasCargo()) {
+            if (moved > 0) worker.notifyOwner(ChatFormatting.GREEN, "message.baritonehelper.deposited", moved);
+            worker.stopEngineProcesses();
+            if (!worker.unlimitedCount() && worker.completedBlockCount() >= worker.requestedBlockCount()) {
+                worker.markCompleted();
+                worker.releaseWorkerTickets();
+                worker.setRuntimeState(WorkerRuntimeState.COMPLETED);
+            } else {
+                worker.markCollecting();
             }
-            worker.markCollecting();
             resetTransientState();
-        } else if (moved == 0) {
-            block(WorkerBlockReason.STORAGE_FULL);
-        }
+        } else if (moved == 0) block(WorkerBlockReason.STORAGE_FULL);
     }
 
+    /** Primary movement adapter: submit a Baritone goal, never vanilla navigation. */
     private void navigateTo(BlockPos destination) {
-        BlockPos navigationGoal = currentTarget != null ? currentTarget : destination;
-        boolean started = worker.getNavigation().moveTo(
-                navigationGoal.getX() + 0.5,
-                navigationGoal.getY(),
-                navigationGoal.getZ() + 0.5,
-                1.0);
-
-        if (!started && !navigationGoal.equals(destination)) {
-            started = worker.getNavigation().moveTo(
-                    destination.getX() + 0.5,
-                    destination.getY(),
-                    destination.getZ() + 0.5,
-                    1.0);
-        }
-
-        if (!started) {
-            // Some vanilla path evaluators reject short, valid approaches to solid
-            // target blocks. MoveControl is a collision-respecting fallback; the
-            // watchdog and line-of-sight checks still prevent mining through walls.
-            worker.getMoveControl().setWantedPosition(
-                    destination.getX() + 0.5,
-                    destination.getY(),
-                    destination.getZ() + 0.5,
-                    1.0);
-        }
-    }
-
-    private boolean canReach(ServerLevel level, BlockPos target) {
-        if (worker.blockPosition().distManhattan(target) <= 1) {
-            return true;
-        }
-        if (level.getBlockEntity(target) instanceof Container
-                && distanceTo(target) <= ARRIVAL_DISTANCE_SQUARED) {
-            return true;
-        }
-        return WorkerPlanner.hasLineOfSight(level, worker, target);
+        if (pathRequested) return;
+        worker.beginPathTo(destination);
+        pathRequested = true;
     }
 
     private double distanceTo(BlockPos position) {
-        return worker.distanceToSqr(
-                position.getX() + 0.5,
-                position.getY() + 0.5,
-                position.getZ() + 0.5);
+        return worker.distanceToSqr(position.getX() + 0.5, position.getY() + 0.5, position.getZ() + 0.5);
     }
 
     private void watchProgress(double distance, WorkerBlockReason terminalReason) {
@@ -335,31 +305,20 @@ public final class WorkerController {
             lastProgressAgeTicks = 0;
             return;
         }
-
-        watchdogTicks++;
-        if (watchdogTicks >= WATCHDOG_TICKS) {
-            replanOrBlock(terminalReason);
-        }
+        if (++watchdogTicks >= WATCHDOG_TICKS) replanOrBlock(terminalReason);
     }
 
     private void replanOrBlock(WorkerBlockReason terminalReason) {
-        replanAttempts++;
-        if (replanAttempts >= MAX_REPLAN_ATTEMPTS) {
-            block(terminalReason);
-            return;
-        }
-
-        if (currentTarget != null) {
-            temporarilyRejected.put(currentTarget.asLong(), REJECTED_TARGET_TICKS);
-        }
+        if (++replanAttempts >= MAX_REPLAN_ATTEMPTS) { block(terminalReason); return; }
+        if (currentTarget != null) temporarilyRejected.put(currentTarget.asLong(), REJECTED_TARGET_TICKS);
+        worker.stopEngineProcesses();
         clearPlan(false);
         scanCooldown = 5;
-        activity = worker.job() == WorkerJob.DEPOSIT
-                ? WorkerActivity.RETURNING
-                : WorkerActivity.SEARCHING;
+        activity = WorkerActivity.SEARCHING;
     }
 
     private void block(WorkerBlockReason reason) {
+        worker.stopEngineProcesses();
         clearPlan(false);
         activity = WorkerActivity.BLOCKED;
         worker.markBlocked(reason);
@@ -368,12 +327,12 @@ public final class WorkerController {
     private void clearPlan(boolean clearRejected) {
         currentTarget = null;
         currentWorkPosition = null;
+        searchCursor = null;
+        pathRequested = false;
         watchdogTicks = 0;
         bestDistance = Double.MAX_VALUE;
-        worker.getNavigation().stop();
-        if (clearRejected) {
-            temporarilyRejected.clear();
-        }
+        closeInteractionFallback = false;
+        if (clearRejected) temporarilyRejected.clear();
     }
 
     private void tickRejectedTargets() {

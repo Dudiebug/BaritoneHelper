@@ -235,6 +235,35 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            timeoutTicks = 100)
+    public static void finiteGoalCompletesAfterRealDropAndDeposit(GameTestHelper helper) {
+        supportWorker(helper);
+        helper.setBlock(NEAR_TARGET, Blocks.GOLD_BLOCK);
+        BlockPos storagePos = new BlockPos(2, 1, 2);
+        helper.setBlock(storagePos, Blocks.CHEST);
+        Container storage = containerAt(helper, storagePos);
+        WorkerEntity worker = spawnWorker(helper);
+        worker.configureTarget(blockId(Blocks.GOLD_BLOCK), helper.absolutePos(NEAR_TARGET));
+        worker.setRequestedAmount(1, false);
+        worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
+        worker.startJob();
+
+        helper.runAfterDelay(80, () -> {
+            helper.assertTrue(helper.getBlockState(NEAR_TARGET).isAir(),
+                    "finite goal must break the source block");
+            helper.assertValueEqual(worker.completedBlockCount(), 1,
+                    "finite goal source-block count");
+            helper.assertValueEqual(worker.job(), WorkerJob.COMPLETED,
+                    "finite goal must finish after deposit");
+            helper.assertValueEqual(countItem(storage, Items.GOLD_BLOCK), 1,
+                    "real block drop must reach storage");
+            helper.succeed();
+        });
+    }
+
+    @GameTest(
+            templateNamespace = "minecraft",
+            template = "empty",
             timeoutTicks = 40)
     public static void helperDepositsInventoryIntoAssignedStorage(GameTestHelper helper) {
         supportWorker(helper);
@@ -369,11 +398,11 @@ public final class BaritoneHelperGameTests {
             helper.setBlock(x, 1, 1, Blocks.STONE);
         }
         BlockPos target = new BlockPos(4, 2, 1);
-        helper.setBlock(target, Blocks.IRON_BLOCK);
+        helper.setBlock(target, Blocks.GOLD_BLOCK);
         WorkerEntity worker = spawnWorker(helper);
         Vec3 start = worker.position();
         worker.beginCollection(
-                blockId(Blocks.IRON_BLOCK), helper.absolutePos(target));
+                blockId(Blocks.GOLD_BLOCK), helper.absolutePos(target));
 
         helper.runAfterDelay(100, () -> {
             String diagnostic = "reachable target must be collected; "
@@ -392,7 +421,7 @@ public final class BaritoneHelperGameTests {
                     worker.position().distanceToSqr(start) > 0.25,
                     "helper must navigate toward a distant target");
             helper.assertValueEqual(
-                    countItem(worker, Items.IRON_BLOCK), 1, "traversal collection");
+                    countItem(worker, Items.GOLD_BLOCK), 1, "traversal collection");
             helper.succeed();
         });
     }

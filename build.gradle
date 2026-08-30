@@ -13,6 +13,7 @@ base {
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.withSourcesJar()
 
 sourceSets.main.resources {
     srcDir('src/generated/resources')

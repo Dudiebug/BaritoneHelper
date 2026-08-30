@@ -11,7 +11,6 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
-import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 
 @EventBusSubscriber(
         modid = BaritoneHelper.MOD_ID,
@@ -27,13 +26,6 @@ public final class BaritoneHelperClient {
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(), Renderer::new);
         event.registerEntityRenderer(
                 BaritoneHelper.LEGACY_BARITONE_HELPER_ENTITY.get(), Renderer::new);
-    }
-
-    @SubscribeEvent
-    static void registerScreens(RegisterMenuScreensEvent event) {
-        event.register(
-                BaritoneHelper.WORKER_DASHBOARD.get(),
-                WorkerDashboardScreen::new);
     }
 
     private static final class Renderer

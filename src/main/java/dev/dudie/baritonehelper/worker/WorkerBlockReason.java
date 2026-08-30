@@ -13,7 +13,12 @@ public enum WorkerBlockReason {
     INVENTORY_FULL_NO_STORAGE("reason.baritonehelper.inventory_full_no_storage"),
     STORAGE_MISSING("reason.baritonehelper.storage_missing"),
     STORAGE_WRONG_DIMENSION("reason.baritonehelper.storage_wrong_dimension"),
-    STORAGE_FULL("reason.baritonehelper.storage_full");
+    STORAGE_FULL("reason.baritonehelper.storage_full"),
+    MISSING_REQUIRED_TOOL("reason.baritonehelper.missing_required_tool"),
+    WORK_AREA_WRONG_DIMENSION("reason.baritonehelper.work_area_wrong_dimension"),
+    STORAGE_IN_NO_WORK_ZONE("reason.baritonehelper.storage_in_no_work_zone"),
+    PATH_BLOCKED("reason.baritonehelper.path_blocked"),
+    SEARCH_EXHAUSTED("reason.baritonehelper.search_exhausted");
 
     private final String translationKey;
 

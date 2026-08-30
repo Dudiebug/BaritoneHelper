@@ -6,9 +6,7 @@ import dev.dudie.baritonehelper.entity.WorkerEntity;
 import dev.dudie.baritonehelper.worker.WorkerMessages;
 import java.util.Optional;
 import net.minecraft.ChatFormatting;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
@@ -51,77 +49,26 @@ public final class WorkerControllerItem extends Item {
             return InteractionResult.FAIL;
         }
 
-        var position = context.getClickedPos();
-        var state = level.getBlockState(position);
-        if (state.isAir()) {
-            WorkerMessages.send(
-                    player,
-                    ChatFormatting.RED,
-                    "message.baritonehelper.invalid_target");
-            return InteractionResult.FAIL;
+        // World clicks are interpreted only by an explicit, server-tracked
+        // selection mode.  In normal use there is deliberately no
+        // configureTarget(blockId, position) path: exact target selection is
+        // performed by the searchable block picker in the dashboard.
+        var zoneSelection = worker.consumeZoneSelection(player);
+        if (zoneSelection != null && worker.updateNoWorkZoneCenter(zoneSelection, context.getClickedPos())) {
+            WorkerMessages.send(player, ChatFormatting.GREEN,
+                    "message.baritonehelper.zone_center_changed");
+        } else if (worker.consumeAreaSelection(player)) {
+            worker.setWorkArea(context.getClickedPos(), worker.workAreaHorizontalRadius(), worker.workAreaVerticalRadius());
+            WorkerMessages.send(player, ChatFormatting.GREEN,
+                    "message.baritonehelper.work_area_changed");
+        } else if (worker.consumeStorageSelection(player)
+                && level.getBlockEntity(context.getClickedPos()) instanceof Container) {
+            var position = context.getClickedPos();
+            worker.assignStorage(level, position);
+            WorkerMessages.send(player, ChatFormatting.GREEN,
+                    "message.baritonehelper.storage_assigned",
+                    position.getX(), position.getY(), position.getZ());
         }
-
-        ResourceLocation blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        if (player.isShiftKeyDown()) {
-            BlockEntity blockEntity = level.getBlockEntity(position);
-            if (blockEntity instanceof Container) {
-                worker.assignStorage(level, position);
-                WorkerMessages.send(
-                        player,
-                        ChatFormatting.GREEN,
-                        "message.baritonehelper.storage_assigned",
-                        position.getX(),
-                        position.getY(),
-                        position.getZ());
-            } else {
-                boolean excluded = worker.toggleExclusion(blockId);
-                WorkerMessages.send(
-                        player,
-                        excluded ? ChatFormatting.YELLOW : ChatFormatting.GREEN,
-                        excluded
-                                ? "message.baritonehelper.excluded"
-                                : "message.baritonehelper.included",
-                        state.getBlock().getName());
-            }
-            return InteractionResult.CONSUME;
-        }
-
-        if (level.getBlockEntity(position) != null
-                || state.getDestroySpeed(level, position) < 0.0F) {
-            WorkerMessages.send(
-                    player,
-                    ChatFormatting.RED,
-                    "message.baritonehelper.invalid_target");
-            return InteractionResult.FAIL;
-        }
-
-        Optional<ResourceLocation> previous = worker.configureTarget(blockId, position);
-        Component targetName = state.getBlock().getName();
-        if (previous.isEmpty()) {
-            WorkerMessages.send(
-                    player,
-                    ChatFormatting.GREEN,
-                    "message.baritonehelper.target_set",
-                    targetName);
-        } else if (previous.get().equals(blockId)) {
-            WorkerMessages.send(
-                    player,
-                    ChatFormatting.GREEN,
-                    "message.baritonehelper.target_confirmed",
-                    targetName);
-        } else {
-            Component previousName = BuiltInRegistries.BLOCK.get(previous.get()).getName();
-            WorkerMessages.send(
-                    player,
-                    ChatFormatting.GREEN,
-                    "message.baritonehelper.target_changed",
-                    previousName,
-                    targetName);
-        }
-        WorkerMessages.send(
-                player,
-                ChatFormatting.GRAY,
-                "message.baritonehelper.target_ready");
         worker.openDashboard(player);
         return InteractionResult.CONSUME;
     }

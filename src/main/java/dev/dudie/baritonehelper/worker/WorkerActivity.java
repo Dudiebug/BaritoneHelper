@@ -5,6 +5,7 @@ public enum WorkerActivity {
     READY("activity.baritonehelper.ready"),
     SEARCHING("activity.baritonehelper.searching"),
     PATHING("activity.baritonehelper.pathing"),
+    BREAKING("activity.baritonehelper.breaking"),
     COLLECTING("activity.baritonehelper.collecting"),
     RETURNING("activity.baritonehelper.returning"),
     DEPOSITING("activity.baritonehelper.depositing"),
