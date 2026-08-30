@@ -1,0 +1,231 @@
+name: Apply worker water navigation
+
+on:
+  push:
+    branches:
+      - rewrite/real-baritone-v2
+    paths:
+      - .github/workflows/apply-worker-water-navigation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.event.head_commit.message == 'Add worker water-navigation patch workflow'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: rewrite/real-baritone-v2
+          fetch-depth: 0
+
+      - name: Install Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Patch WorkerEntity with amphibious navigation
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from __future__ import annotations
+
+          import re
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          worker = Path('src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java')
+          if not worker.is_file():
+              raise SystemExit(f'Missing expected source file: {worker}')
+
+          original = worker.read_text(encoding='utf-8')
+          marker_begin = '    // BARITONEHELPER-WATER-NAVIGATION-BEGIN'
+          marker_end = '    // BARITONEHELPER-WATER-NAVIGATION-END'
+
+          def add_imports(source: str, imports: list[str]) -> str:
+              missing = [item for item in imports if f'import {item};' not in source]
+              if not missing:
+                  return source
+              package_match = re.search(r'^package\s+[^;]+;\s*$', source, re.MULTILINE)
+              if package_match is None:
+                  raise RuntimeError('Could not find Java package declaration')
+              insertion = '\n' + ''.join(f'import {item};\n' for item in missing)
+              return source[:package_match.end()] + insertion + source[package_match.end():]
+
+          def matching_brace(source: str, opening: int) -> int:
+              depth = 0
+              state = 'code'
+              i = opening
+              while i < len(source):
+                  ch = source[i]
+                  nxt = source[i + 1] if i + 1 < len(source) else ''
+                  if state == 'code':
+                      if ch == '/' and nxt == '/':
+                          state = 'line'
+                          i += 1
+                      elif ch == '/' and nxt == '*':
+                          state = 'block'
+                          i += 1
+                      elif ch == '"':
+                          state = 'string'
+                      elif ch == "'":
+                          state = 'char'
+                      elif ch == '{':
+                          depth += 1
+                      elif ch == '}':
+                          depth -= 1
+                          if depth == 0:
+                              return i
+                  elif state == 'line':
+                      if ch == '\n':
+                          state = 'code'
+                  elif state == 'block':
+                      if ch == '*' and nxt == '/':
+                          state = 'code'
+                          i += 1
+                  elif state == 'string':
+                      if ch == '\\':
+                          i += 1
+                      elif ch == '"':
+                          state = 'code'
+                  elif state == 'char':
+                      if ch == '\\':
+                          i += 1
+                      elif ch == "'":
+                          state = 'code'
+                  i += 1
+              raise RuntimeError('Unbalanced Java braces')
+
+          def remove_old_generated_block(source: str) -> str:
+              if marker_begin not in source:
+                  return source
+              start = source.index(marker_begin)
+              end = source.index(marker_end, start) + len(marker_end)
+              while end < len(source) and source[end] in '\r\n':
+                  end += 1
+              return source[:start] + source[end:]
+
+          def patch_existing_navigation(source: str, navigation_class: str) -> tuple[str, bool]:
+              match = re.search(r'\bcreateNavigation\s*\(([^)]*)\)\s*\{', source)
+              if match is None:
+                  return source, False
+              params = match.group(1).strip()
+              if not params:
+                  raise RuntimeError('createNavigation method has no Level parameter')
+              param_name = re.split(r'\s+', params.split(',')[0].strip())[-1]
+              opening = source.index('{', match.start())
+              closing = matching_brace(source, opening)
+              body = '{\n        return new ' + navigation_class + '(this, ' + param_name + ');\n    }'
+              return source[:opening] + body + source[closing + 1:], True
+
+          def build_variant(path_type: str, include_float: bool) -> str:
+              source = remove_old_generated_block(original)
+              source = add_imports(source, [
+                  'net.minecraft.world.entity.ai.navigation.AmphibiousPathNavigation',
+                  'net.minecraft.world.entity.ai.navigation.PathNavigation',
+                  'net.minecraft.world.level.Level',
+                  f'net.minecraft.world.level.pathfinder.{path_type}',
+              ])
+
+              source, replaced = patch_existing_navigation(source, 'AmphibiousPathNavigation')
+
+              statements = [
+                  f'this.setPathfindingMalus({path_type}.WATER, 0.0F);',
+                  f'this.setPathfindingMalus({path_type}.WATER_BORDER, 0.0F);',
+              ]
+              if include_float:
+                  statements.append('this.getNavigation().setCanFloat(true);')
+
+              generated = [marker_begin, '    {']
+              generated.extend(f'        {statement}' for statement in statements)
+              generated.append('    }')
+              generated.append('')
+              if not replaced:
+                  generated.extend([
+                      '    @Override',
+                      '    protected PathNavigation createNavigation(Level level) {',
+                      '        return new AmphibiousPathNavigation(this, level);',
+                      '    }',
+                      '',
+                  ])
+              generated.append(marker_end)
+              generated.append('')
+
+              final_close = source.rfind('}')
+              if final_close < 0:
+                  raise RuntimeError('Could not find WorkerEntity class closing brace')
+              return source[:final_close] + '\n' + '\n'.join(generated) + source[final_close:]
+
+          variants = [
+              ('PathType', True),
+              ('PathType', False),
+              ('BlockPathTypes', True),
+              ('BlockPathTypes', False),
+          ]
+
+          gradlew = Path('gradlew')
+          if not gradlew.is_file():
+              raise SystemExit('Missing Gradle wrapper')
+          gradlew.chmod(gradlew.stat().st_mode | 0o111)
+
+          logs = Path('build/water-navigation-variant-logs')
+          logs.mkdir(parents=True, exist_ok=True)
+          selected: tuple[str, bool] | None = None
+
+          for index, (path_type, include_float) in enumerate(variants, start=1):
+              worker.write_text(build_variant(path_type, include_float), encoding='utf-8')
+              result = subprocess.run(
+                  ['./gradlew', 'compileJava', '--no-daemon', '--stacktrace'],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  check=False,
+              )
+              (logs / f'{index}-{path_type}-float-{include_float}.log').write_text(
+                  result.stdout,
+                  encoding='utf-8',
+              )
+              if result.returncode == 0:
+                  selected = (path_type, include_float)
+                  break
+
+          if selected is None:
+              worker.write_text(original, encoding='utf-8')
+              tail = []
+              for log in sorted(logs.glob('*.log')):
+                  text = log.read_text(encoding='utf-8', errors='replace')
+                  tail.append(f'===== {log.name} =====\n{text[-12000:]}')
+              raise SystemExit('No compatible water-navigation variant compiled.\n' + '\n'.join(tail))
+
+          path_type, include_float = selected
+          report = Path('docs/development/water-navigation-patch.md')
+          report.parent.mkdir(parents=True, exist_ok=True)
+          report.write_text(
+              '# Worker water-navigation patch\n\n'
+              'This marker is written only after the patched `WorkerEntity` compiles.\n\n'
+              f'- Path type API: `{path_type}`\n'
+              f'- Explicit floating enabled: `{str(include_float).lower()}`\n'
+              '- Navigation: `AmphibiousPathNavigation`\n'
+              '- Water path malus: `0.0`\n'
+              '- Water-border path malus: `0.0`\n',
+              encoding='utf-8',
+          )
+          print(f'Selected water-navigation variant: {selected}')
+          PY
+
+      - name: Run full build
+        run: ./gradlew clean build --no-daemon --stacktrace
+
+      - name: Commit verified patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java docs/development/water-navigation-patch.md
+          git commit -m 'Fix worker water pathing with amphibious navigation'
+          git push origin HEAD:rewrite/real-baritone-v2
