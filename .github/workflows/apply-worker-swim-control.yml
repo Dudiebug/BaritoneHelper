@@ -1,0 +1,230 @@
+name: Apply worker swim control
+
+on:
+  push:
+    branches:
+      - rewrite/real-baritone-v2
+    paths:
+      - .github/workflows/apply-worker-swim-control.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.event.head_commit.message == 'Add worker swim-control patch workflow'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: rewrite/real-baritone-v2
+          fetch-depth: 0
+
+      - name: Install Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Add water-specific movement controller
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from __future__ import annotations
+
+          import re
+          import subprocess
+          from pathlib import Path
+
+          worker = Path('src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java')
+          if not worker.is_file():
+              raise SystemExit(f'Missing expected source file: {worker}')
+
+          original = worker.read_text(encoding='utf-8')
+          block_begin = '    // BARITONEHELPER-SWIM-CONTROL-BEGIN'
+          block_end = '    // BARITONEHELPER-SWIM-CONTROL-END'
+          tick_marker = '        // BARITONEHELPER-SWIM-CONTROL-TICK'
+
+          def add_imports(source: str, imports: list[str]) -> str:
+              missing = [item for item in imports if f'import {item};' not in source]
+              if not missing:
+                  return source
+              package_match = re.search(r'^package\s+[^;]+;\s*$', source, re.MULTILINE)
+              if package_match is None:
+                  raise RuntimeError('Could not find Java package declaration')
+              insertion = '\n' + ''.join(f'import {item};\n' for item in missing)
+              return source[:package_match.end()] + insertion + source[package_match.end():]
+
+          def matching_brace(source: str, opening: int) -> int:
+              depth = 0
+              state = 'code'
+              i = opening
+              while i < len(source):
+                  ch = source[i]
+                  nxt = source[i + 1] if i + 1 < len(source) else ''
+                  if state == 'code':
+                      if ch == '/' and nxt == '/':
+                          state = 'line'; i += 1
+                      elif ch == '/' and nxt == '*':
+                          state = 'block'; i += 1
+                      elif ch == '"':
+                          state = 'string'
+                      elif ch == "'":
+                          state = 'char'
+                      elif ch == '{':
+                          depth += 1
+                      elif ch == '}':
+                          depth -= 1
+                          if depth == 0:
+                              return i
+                  elif state == 'line':
+                      if ch == '\n': state = 'code'
+                  elif state == 'block':
+                      if ch == '*' and nxt == '/': state = 'code'; i += 1
+                  elif state == 'string':
+                      if ch == '\\': i += 1
+                      elif ch == '"': state = 'code'
+                  elif state == 'char':
+                      if ch == '\\': i += 1
+                      elif ch == "'": state = 'code'
+                  i += 1
+              raise RuntimeError('Unbalanced Java braces')
+
+          def remove_generated(source: str) -> str:
+              if block_begin in source:
+                  start = source.index(block_begin)
+                  end = source.index(block_end, start) + len(block_end)
+                  while end < len(source) and source[end] in '\r\n':
+                      end += 1
+                  source = source[:start] + source[end:]
+              source = source.replace(tick_marker + '\n        this.baritoneHelperUpdateMoveControl();\n', '')
+              return source
+
+          def inject_tick_call(source: str) -> tuple[str, bool]:
+              if tick_marker in source:
+                  return source, True
+              match = re.search(r'\b(?:public|protected)\s+void\s+tick\s*\(\s*\)\s*\{', source)
+              if match is None:
+                  return source, False
+              opening = source.index('{', match.start())
+              insertion = '\n' + tick_marker + '\n        this.baritoneHelperUpdateMoveControl();'
+              return source[:opening + 1] + insertion + source[opening + 1:], True
+
+          def make_variant(in_water_speed: str, apply_gravity: str) -> str:
+              source = remove_generated(original)
+              source = add_imports(source, [
+                  'net.minecraft.world.entity.ai.control.MoveControl',
+                  'net.minecraft.world.entity.ai.control.SmoothSwimmingMoveControl',
+              ])
+              source, injected = inject_tick_call(source)
+
+              generated = [
+                  block_begin,
+                  '    private MoveControl baritoneHelperGroundMoveControl;',
+                  '    private MoveControl baritoneHelperSwimMoveControl;',
+                  '',
+                  '    private void baritoneHelperUpdateMoveControl() {',
+                  '        if (this.baritoneHelperGroundMoveControl == null) {',
+                  '            this.baritoneHelperGroundMoveControl = this.moveControl;',
+                  '            this.baritoneHelperSwimMoveControl = new SmoothSwimmingMoveControl(',
+                  f'                    this, 85, 10, {in_water_speed}F, 1.0F, {apply_gravity});',
+                  '        }',
+                  '',
+                  '        if (this.isInWater()) {',
+                  '            if (this.moveControl != this.baritoneHelperSwimMoveControl) {',
+                  '                this.moveControl = this.baritoneHelperSwimMoveControl;',
+                  '            }',
+                  '        } else if (this.moveControl == this.baritoneHelperSwimMoveControl) {',
+                  '            this.moveControl = this.baritoneHelperGroundMoveControl;',
+                  '        }',
+                  '    }',
+              ]
+              if not injected:
+                  generated.extend([
+                      '',
+                      '    @Override',
+                      '    public void tick() {',
+                      tick_marker,
+                      '        this.baritoneHelperUpdateMoveControl();',
+                      '        super.tick();',
+                      '    }',
+                  ])
+              generated.extend([block_end, ''])
+
+              final_close = source.rfind('}')
+              if final_close < 0:
+                  raise RuntimeError('Could not find WorkerEntity class closing brace')
+              return source[:final_close] + '\n' + '\n'.join(generated) + source[final_close:]
+
+          variants = [
+              ('0.85', 'true'),
+              ('0.70', 'true'),
+              ('0.85', 'false'),
+              ('0.70', 'false'),
+          ]
+
+          gradlew = Path('gradlew')
+          if not gradlew.is_file():
+              raise SystemExit('Missing Gradle wrapper')
+          gradlew.chmod(gradlew.stat().st_mode | 0o111)
+
+          logs = Path('build/swim-control-variant-logs')
+          logs.mkdir(parents=True, exist_ok=True)
+          selected: tuple[str, str] | None = None
+
+          for index, (speed, gravity) in enumerate(variants, start=1):
+              worker.write_text(make_variant(speed, gravity), encoding='utf-8')
+              result = subprocess.run(
+                  ['./gradlew', 'compileJava', '--no-daemon', '--stacktrace'],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  check=False,
+              )
+              (logs / f'{index}-speed-{speed}-gravity-{gravity}.log').write_text(
+                  result.stdout,
+                  encoding='utf-8',
+              )
+              if result.returncode == 0:
+                  selected = (speed, gravity)
+                  break
+
+          if selected is None:
+              worker.write_text(original, encoding='utf-8')
+              tails = []
+              for log in sorted(logs.glob('*.log')):
+                  text = log.read_text(encoding='utf-8', errors='replace')
+                  tails.append(f'===== {log.name} =====\n{text[-12000:]}')
+              raise SystemExit('No compatible swim-controller variant compiled.\n' + '\n'.join(tails))
+
+          speed, gravity = selected
+          report = Path('docs/development/water-navigation-patch.md')
+          current = report.read_text(encoding='utf-8') if report.exists() else '# Worker water-navigation patch\n'
+          section = (
+              '\n## Water movement controller\n\n'
+              '- Ground movement retains the original worker `MoveControl`.\n'
+              '- While submerged, the worker switches to `SmoothSwimmingMoveControl`.\n'
+              '- Leaving water restores the original ground controller.\n'
+              f'- In-water speed multiplier: `{speed}`.\n'
+              f'- Swimming-controller gravity: `{gravity}`.\n'
+          )
+          if '## Water movement controller' in current:
+              current = current.split('## Water movement controller', 1)[0].rstrip() + '\n'
+          report.parent.mkdir(parents=True, exist_ok=True)
+          report.write_text(current.rstrip() + '\n' + section, encoding='utf-8')
+          print(f'Selected swim-control variant: {selected}')
+          PY
+
+      - name: Run full build
+        run: ./gradlew clean build --no-daemon --stacktrace
+
+      - name: Commit verified swim control
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java docs/development/water-navigation-patch.md
+          git commit -m 'Add dedicated worker swimming movement control'
+          git push origin HEAD:rewrite/real-baritone-v2
