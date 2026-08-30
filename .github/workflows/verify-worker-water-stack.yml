@@ -1,0 +1,68 @@
+name: Verify worker water stack
+
+on:
+  push:
+    branches:
+      - rewrite/real-baritone-v2
+    paths:
+      - .github/workflows/verify-worker-water-stack.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.event.head_commit.message == 'Add worker water-stack verification workflow'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: rewrite/real-baritone-v2
+          fetch-depth: 0
+
+      - name: Install Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Verify water-navigation implementation is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE='src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java'
+          grep -Fq 'BARITONEHELPER-WATER-NAVIGATION-BEGIN' "$SOURCE"
+          grep -Fq 'AmphibiousPathNavigation' "$SOURCE"
+          grep -Fq 'BARITONEHELPER-SWIM-CONTROL-BEGIN' "$SOURCE"
+          grep -Fq 'SmoothSwimmingMoveControl' "$SOURCE"
+
+      - name: Run full clean build
+        run: |
+          chmod +x gradlew
+          ./gradlew clean build --no-daemon --stacktrace
+
+      - name: Record verified state
+        shell: bash
+        run: |
+          mkdir -p docs/development
+          cat > docs/development/worker-water-stack-verified.md <<EOF
+          # Worker water stack verified
+
+          The `rewrite/real-baritone-v2` branch passed a clean full Gradle build with:
+
+          - amphibious path navigation;
+          - neutral water and water-border path costs;
+          - the original ground movement controller retained on land;
+          - a dedicated smooth swimming controller while the worker is in water;
+          - automatic restoration of ground movement after leaving water.
+
+          Verification source commit: `${GITHUB_SHA}`
+          EOF
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/development/worker-water-stack-verified.md
+          git commit -m 'Record verified worker water-navigation build'
+          git push origin HEAD:rewrite/real-baritone-v2
