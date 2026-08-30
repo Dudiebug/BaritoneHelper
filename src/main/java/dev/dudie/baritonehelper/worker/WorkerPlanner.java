@@ -17,7 +17,7 @@ import net.minecraft.world.phys.Vec3;
 public final class WorkerPlanner {
     public static final int HORIZONTAL_RANGE = 16;
     public static final int VERTICAL_RANGE = 8;
-    private static final double INTERACTION_DISTANCE_SQUARED = 12.25;
+    private static final double CURRENT_POSITION_DISTANCE_SQUARED = 2.25;
 
     private WorkerPlanner() {
     }
@@ -79,10 +79,10 @@ public final class WorkerPlanner {
                 target.getX() + 0.5,
                 target.getY() + 0.5,
                 target.getZ() + 0.5);
-        if (targetDistance <= INTERACTION_DISTANCE_SQUARED
+        if (targetDistance <= CURRENT_POSITION_DISTANCE_SQUARED
                 && hasLineOfSight(level, worker, target)) {
-            // The live worker already occupies this valid interaction position.
-            // Do not reject it by collision-testing a box against itself.
+            // The worker is already in a valid interaction position. Do not reject
+            // this merely because its live bounding box overlaps the candidate box.
             return Optional.of(worker.blockPosition().immutable());
         }
 

@@ -301,6 +301,12 @@ public final class WorkerController {
     }
 
     private boolean canReach(ServerLevel level, BlockPos target) {
+        if (level.getBlockEntity(target) instanceof Container
+                && distanceTo(target) <= ARRIVAL_DISTANCE_SQUARED) {
+            // Containers directly beside or below the worker are physically
+            // reachable even when their partial collision shape confuses the ray.
+            return true;
+        }
         BlockHitResult hit = level.clip(new ClipContext(
                 worker.getEyePosition(),
                 Vec3.atCenterOf(target),
