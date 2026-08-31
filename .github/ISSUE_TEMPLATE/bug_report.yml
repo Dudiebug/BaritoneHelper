@@ -1,0 +1,98 @@
+name: Bug report
+description: Report a reproducible Baritone Helper problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please include enough detail to reproduce it. Do not use this form for security vulnerabilities; follow SECURITY.md instead.
+
+  - type: input
+    id: baritonehelper_version
+    attributes:
+      label: Baritone Helper version
+      placeholder: "3.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: minecraft_version
+    attributes:
+      label: Minecraft version
+      placeholder: "1.21.1"
+    validations:
+      required: true
+
+  - type: input
+    id: neoforge_version
+    attributes:
+      label: NeoForge version
+      placeholder: "21.1.248"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Dedicated server
+        - Singleplayer / integrated server
+        - Development GameTest environment
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: migrated
+    attributes:
+      label: Was this worker/world migrated from an older Baritone Helper or BuddyBot version?
+      options:
+        - "No"
+        - "Yes"
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include target block, work area, storage, relevant pathing settings, and worker state when useful.
+      placeholder: |
+        1. Place a worker...
+        2. Configure...
+        3. Start the job...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs, activity state, screenshots, or video
+      description: Paste logs as text when practical and include the dashboard blocking reason/activity state if relevant.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed secrets, private server information, and unrelated personal data from logs.
+          required: true

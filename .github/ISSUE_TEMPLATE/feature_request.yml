@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest an improvement to Baritone Helper
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Baritone Helper is intentionally a collector-only worker. Requests should fit that product direction or clearly explain why the product contract should change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to accomplish that is difficult or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the workflow from the player's point of view.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional workarounds or different designs you considered.
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Pathing, server, or compatibility impact
+      description: If known, describe effects on chunk loading, scanning, networking, inventory, persistence, migration, or performance.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I understand Baritone Helper is currently a collector-only worker rather than a general combat/follow/rescue bot.
+          required: true
