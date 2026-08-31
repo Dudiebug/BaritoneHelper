@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag (must match v2.0.0)
+        description: Release tag (must match gradle.properties)
         required: true
-        default: v2.0.0
+        default: v3.1.0
 
 permissions:
   contents: write
@@ -38,22 +38,25 @@ jobs:
       - name: Verify NeoForge GameTests
         run: ./gradlew runGameTestServer --no-daemon --console=plain
 
-      - name: Build and verify v2 artifact
+      - name: Build and verify artifact
         run: |
           ./gradlew build --no-daemon --console=plain
-          test "$(grep '^mod_version=' gradle.properties | cut -d= -f2)" = "2.0.0"
-          test -f build/libs/baritonehelper-2.0.0.jar
-          test -f build/libs/baritonehelper-2.0.0-sources.jar
-          test "$(find build/libs -maxdepth 1 -type f -name 'baritonehelper-2.0.0.jar' | wc -l)" = 1
+          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          test "$TAG" = "v$VERSION"
+          test -f "build/libs/baritonehelper-$VERSION.jar"
+          test -f "build/libs/baritonehelper-$VERSION-sources.jar"
+          test "$(find build/libs -maxdepth 1 -type f -name "baritonehelper-$VERSION.jar" | wc -l)" = 1
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
           gh release create "$TAG" \
-            build/libs/baritonehelper-2.0.0.jar \
-            build/libs/baritonehelper-2.0.0-sources.jar \
+            "build/libs/baritonehelper-$VERSION.jar" \
+            "build/libs/baritonehelper-$VERSION-sources.jar" \
             --title "Baritone Helper $TAG" \
             --generate-notes \
             --latest

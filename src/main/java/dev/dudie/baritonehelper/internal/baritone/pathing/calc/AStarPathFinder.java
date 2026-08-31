@@ -54,6 +54,7 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
          bestHeuristicSoFar[i] = this.startNode.estimatedCostToGoal;
          this.bestSoFar[i] = this.startNode;
       }
+      this.publishProgress();
 
       MutableMoveResult res = new MutableMoveResult();
       BetterWorldBorder worldBorder = new BetterWorldBorder(this.calcContext.world.getWorldBorder());
@@ -78,7 +79,7 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
       double minimumImprovement = settings.minimumImprovementRepropagation.get() ? 0.01 : 0.0;
       Moves[] allMoves = Moves.values();
 
-      while (!openSet.isEmpty() && numEmptyChunk < pathingMaxChunkBorderFetch && !this.cancelRequested) {
+      while (!openSet.isEmpty() && numEmptyChunk < pathingMaxChunkBorderFetch && !this.cancelRequested.get()) {
          if ((numNodes & timeCheckInterval - 1) == 0) {
             long now = System.currentTimeMillis();
             if (now - failureTimeoutTime >= 0L || !failing && now - primaryTimeoutTime >= 0L) {
@@ -87,16 +88,20 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
          }
 
          if (slowPath) {
-            try {
-               Thread.sleep(settings.slowPathTimeDelayMS.get());
-            } catch (InterruptedException var44) {
-            }
+             try {
+                Thread.sleep(settings.slowPathTimeDelayMS.get());
+             } catch (InterruptedException var44) {
+                if (this.cancelRequested.get()) {
+                   break;
+                }
+             }
          }
 
          PathNode currentNode = openSet.removeLowest();
          this.mostRecentConsidered = currentNode;
          numNodes++;
          if (this.goal.isInGoal(currentNode.x, currentNode.y, currentNode.z)) {
+            this.publishProgress();
             this.calcContext.baritone.logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
             return Optional.of(new Path(this.startNode, currentNode, numNodes, this.goal, this.calcContext));
          }
@@ -167,9 +172,11 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                }
             }
          }
+         this.publishProgress();
       }
 
-      if (this.cancelRequested) {
+      this.publishProgress();
+      if (this.cancelRequested.get()) {
          return Optional.empty();
       } else {
          InternalBaritoneRuntime.LOGGER.debug(numMovementsConsidered + " movements considered");

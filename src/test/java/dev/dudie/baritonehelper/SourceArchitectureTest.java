@@ -42,7 +42,7 @@ class SourceArchitectureTest {
         assertTrue(source.contains("setInvulnerable(true)"));
         assertTrue(source.contains("public boolean isAttackable()"));
         assertTrue(source.contains("ClipContext.Block.OUTLINE"));
-        assertTrue(source.contains("temporarilyRejected"));
+        assertTrue(source.contains("rejectedPositions"));
     }
 
     @Test

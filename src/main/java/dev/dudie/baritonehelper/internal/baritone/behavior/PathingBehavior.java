@@ -40,14 +40,18 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.MinecraftServer;
 
 public final class PathingBehavior extends Behavior implements IPathingBehavior {
    private PathExecutor current;
    private PathExecutor next;
-   private Goal goal;
+   private volatile Goal goal;
    private CalculationContext context;
    private int ticksElapsedSoFar;
    private BetterBlockPos startPosition;
@@ -58,6 +62,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    private boolean cancelRequested;
    private boolean calcFailedLastTick;
    private volatile AbstractNodeCostSearch inProgress;
+   private volatile Future<?> calculationFuture;
    private final Object pathCalcLock = new Object();
    private final Object pathPlanLock = new Object();
    private BetterBlockPos expectedSegmentStart;
@@ -234,17 +239,22 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    }
 
    public void secretInternalSetGoal(Goal goal) {
-      this.goal = goal;
+      synchronized (this.pathPlanLock) {
+         if (!goalsEquivalent(this.goal, goal)) {
+            this.goal = goal;
+         }
+      }
+   }
+
+   private static boolean goalsEquivalent(Goal first, Goal second) {
+      return Objects.equals(first, second)
+         || first != null && second != null
+            && first.getClass() == second.getClass()
+            && first.toString().equals(second.toString());
    }
 
    public boolean secretInternalSetGoalAndPath(PathingCommand command) {
       this.secretInternalSetGoal(command.goal);
-      if (command instanceof PathingCommandContext) {
-         this.context = ((PathingCommandContext)command).desiredCalcContext;
-      } else {
-         this.context = new CalculationContext(this.baritone, true);
-      }
-
       if (this.goal == null) {
          return false;
       } else if (!this.goal.isInGoal(this.ctx.feetPos()) && !this.goal.isInGoal(this.expectedSegmentStart)) {
@@ -254,12 +264,18 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
             } else {
                boolean var10000;
                synchronized (this.pathCalcLock) {
-                  if (this.inProgress != null) {
-                     return false;
+                   if (this.inProgress != null || this.calculationFuture != null) {
+                      return false;
                   }
 
-                  this.queuePathEvent(PathEvent.CALC_STARTED);
-                  this.findPathInNewThread(this.expectedSegmentStart, true, this.context);
+                   if (command instanceof PathingCommandContext) {
+                      this.context = ((PathingCommandContext)command).desiredCalcContext;
+                   } else {
+                      this.context = new CalculationContext(this.baritone, true);
+                   }
+
+                   this.queuePathEvent(PathEvent.CALC_STARTED);
+                   this.findPathInNewThread(this.expectedSegmentStart, true, this.context);
                   var10000 = true;
                }
 
@@ -372,9 +388,18 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    private void invalidateCalculation() {
       synchronized (this.pathCalcLock) {
          this.calculationGeneration++;
-         if (this.inProgress != null) {
-            this.inProgress.cancel();
-            this.inProgress = null;
+         AbstractNodeCostSearch pathfinder = this.inProgress;
+         Future<?> future = this.calculationFuture;
+         this.inProgress = null;
+         this.calculationFuture = null;
+         if (pathfinder != null) {
+            pathfinder.cancel();
+         }
+         if (future != null) {
+            future.cancel(true);
+            if (future instanceof Runnable runnable && InternalBaritoneRuntime.getExecutor() instanceof ThreadPoolExecutor executor) {
+               executor.remove(runnable);
+            }
          }
       }
    }
@@ -461,7 +486,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    private void findPathInNewThread(BlockPos start, boolean talkAboutIt, CalculationContext context) {
       if (!Thread.holdsLock(this.pathCalcLock)) {
          throw new IllegalStateException("Must be called with synchronization on pathCalcLock");
-      } else if (this.inProgress != null) {
+      } else if (this.inProgress != null || this.calculationFuture != null) {
          throw new IllegalStateException("Already doing it");
       } else if (!context.safeForThreadedUse) {
          throw new IllegalStateException("Improper context thread safety level");
@@ -487,81 +512,146 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
 
             this.inProgress = pathfinder;
             long generation = ++this.calculationGeneration;
-            InternalBaritoneRuntime.getExecutor()
-               .execute(
-                  () -> {
-                     if (talkAboutIt) {
-                        this.logDebug("Starting to search for path from " + start + " to " + goal);
-                     }
+            FutureTask<Void> task = new FutureTask<>(() -> {
+               this.runCalculation(pathfinder, start, goal, talkAboutIt, primaryTimeout, failureTimeout, generation);
+               return null;
+            });
+            this.calculationFuture = task;
+            try {
+               InternalBaritoneRuntime.getExecutor().execute(task);
+            } catch (RuntimeException exception) {
+               task.cancel(false);
+               if (this.inProgress == pathfinder && this.calculationGeneration == generation) {
+                  this.calculationGeneration++;
+                  this.inProgress = null;
+                  this.calculationFuture = null;
+                  pathfinder.cancel();
+               }
+               this.queuePathEvent(talkAboutIt ? PathEvent.CALC_FAILED : PathEvent.NEXT_CALC_FAILED);
+               this.logDebug("Unable to queue path calculation: " + exception);
+            }
+         }
+      }
+   }
 
-                     PathCalculationResult calcResult = pathfinder.calculate(primaryTimeout, failureTimeout);
-                     synchronized (this.pathPlanLock) {
-                        synchronized (this.pathCalcLock) {
-                           if (this.inProgress != pathfinder
-                              || this.calculationGeneration != generation
-                              || !Objects.equals(this.goal, goal)) {
-                              return;
-                           }
-                           this.inProgress = null;
-                        }
-                        if (calcResult.getType() == PathCalculationResult.Type.EXCEPTION) {
-                           this.status = PathingStatus.FAILED;
-                        }
-                        Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(this, p));
-                        if (this.current == null) {
-                           if (executor.isPresent()) {
-                              if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
-                                 this.queuePathEvent(PathEvent.CALC_FINISHED_NOW_EXECUTING);
-                                 this.current = executor.get();
-                                 this.resetEstimatedTicksToGoal(start);
-                              } else {
-                                 this.logDebug("Warning: discarding orphan path segment with incorrect start");
-                              }
-                           } else if (calcResult.getType() != PathCalculationResult.Type.CANCELLATION
-                              && calcResult.getType() != PathCalculationResult.Type.EXCEPTION) {
-                              this.queuePathEvent(PathEvent.CALC_FAILED);
-                           }
-                        } else if (this.next == null) {
-                           if (executor.isPresent()) {
-                              if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
-                                 this.queuePathEvent(PathEvent.NEXT_SEGMENT_CALC_FINISHED);
-                                 this.next = executor.get();
-                              } else {
-                                 this.logDebug("Warning: discarding orphan next segment with incorrect start");
-                              }
-                           } else {
-                              this.queuePathEvent(PathEvent.NEXT_CALC_FAILED);
-                           }
-                        } else {
-                           this.baritone.logDirect("Warning: PathingBehavior illegal state! Discarding invalid path!");
-                        }
+   private void runCalculation(
+      AbstractNodeCostSearch pathfinder,
+      BlockPos start,
+      Goal goal,
+      boolean talkAboutIt,
+      long primaryTimeout,
+      long failureTimeout,
+      long generation
+   ) {
+      boolean handedOff = false;
+      try {
+         if (talkAboutIt) {
+            this.logDebug("Starting to search for path from " + start + " to " + goal);
+         }
 
-                        if (talkAboutIt && this.current != null && this.current.getPath() != null) {
-                           if (goal.isInGoal(this.current.getPath().getDest())) {
-                              this.logDebug(
-                                 "Finished finding a path from "
-                                    + start
-                                    + " to "
-                                    + goal
-                                    + ". "
-                                    + this.current.getPath().getNumNodesConsidered()
-                                    + " nodes considered"
-                              );
-                           } else {
-                              this.logDebug(
-                                 "Found path segment from "
-                                    + start
-                                    + " towards "
-                                    + goal
-                                    + ". "
-                                    + this.current.getPath().getNumNodesConsidered()
-                                    + " nodes considered"
-                              );
-                           }
-                        }
-                     }
+         PathCalculationResult calcResult = pathfinder.calculate(primaryTimeout, failureTimeout);
+         MinecraftServer server = this.ctx.world().getServer();
+         if (server != null && !server.isSameThread()) {
+            server.execute(() -> this.publishCalculation(pathfinder, start, goal, talkAboutIt, calcResult, generation));
+            handedOff = true;
+         } else {
+            handedOff = true;
+            this.publishCalculation(pathfinder, start, goal, talkAboutIt, calcResult, generation);
+         }
+      } finally {
+         if (!handedOff) {
+            this.cleanupCalculation(pathfinder, generation);
+         }
+      }
+   }
+
+   private void publishCalculation(
+      AbstractNodeCostSearch pathfinder,
+      BlockPos start,
+      Goal goal,
+      boolean talkAboutIt,
+      PathCalculationResult calcResult,
+      long generation
+   ) {
+      try {
+         synchronized (this.pathPlanLock) {
+            synchronized (this.pathCalcLock) {
+               if (this.inProgress != pathfinder
+                  || this.calculationGeneration != generation
+                  || !Objects.equals(this.goal, goal)) {
+                  return;
+               }
+            }
+            if (!Objects.equals(this.goal, goal)) {
+               return;
+            }
+            if (calcResult.getType() == PathCalculationResult.Type.EXCEPTION) {
+               this.status = PathingStatus.FAILED;
+            }
+            Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(this, p));
+            if (this.current == null) {
+               if (executor.isPresent()) {
+                  if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
+                     this.queuePathEvent(PathEvent.CALC_FINISHED_NOW_EXECUTING);
+                     this.current = executor.get();
+                     this.resetEstimatedTicksToGoal(start);
+                  } else {
+                     this.logDebug("Warning: discarding orphan path segment with incorrect start");
                   }
-               );
+               } else if (calcResult.getType() != PathCalculationResult.Type.CANCELLATION
+                  && calcResult.getType() != PathCalculationResult.Type.EXCEPTION) {
+                  this.queuePathEvent(PathEvent.CALC_FAILED);
+               }
+            } else if (this.next == null) {
+               if (executor.isPresent()) {
+                  if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
+                     this.queuePathEvent(PathEvent.NEXT_SEGMENT_CALC_FINISHED);
+                     this.next = executor.get();
+                  } else {
+                     this.logDebug("Warning: discarding orphan next segment with incorrect start");
+                  }
+               } else {
+                  this.queuePathEvent(PathEvent.NEXT_CALC_FAILED);
+               }
+            } else {
+               this.baritone.logDirect("Warning: PathingBehavior illegal state! Discarding invalid path!");
+            }
+
+            if (talkAboutIt && this.current != null && this.current.getPath() != null) {
+               if (goal.isInGoal(this.current.getPath().getDest())) {
+                  this.logDebug(
+                     "Finished finding a path from "
+                        + start
+                        + " to "
+                        + goal
+                        + ". "
+                        + this.current.getPath().getNumNodesConsidered()
+                        + " nodes considered"
+                  );
+               } else {
+                  this.logDebug(
+                     "Found path segment from "
+                        + start
+                        + " towards "
+                        + goal
+                        + ". "
+                        + this.current.getPath().getNumNodesConsidered()
+                        + " nodes considered"
+                  );
+               }
+            }
+         }
+      } finally {
+         this.cleanupCalculation(pathfinder, generation);
+      }
+   }
+
+   /** Clear only the request that owns the callback; stale work must not touch a replacement. */
+   private void cleanupCalculation(AbstractNodeCostSearch pathfinder, long generation) {
+      synchronized (this.pathCalcLock) {
+         if (this.inProgress == pathfinder && this.calculationGeneration == generation) {
+            this.inProgress = null;
+            this.calculationFuture = null;
          }
       }
    }

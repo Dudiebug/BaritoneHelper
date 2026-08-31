@@ -1,4 +1,4 @@
-# Baritone Helper 2.0.0
+# Baritone Helper 3.1.0
 
 Baritone Helper is a collector-only Minecraft 1.21.1 / NeoForge 21.1.248 mod.
 It ships one universal JAR containing a relocated, server-side Baritone-derived
@@ -41,7 +41,8 @@ itself.
    pillaring, parkour, water routes, safer routing, and destructive-routing
    policy. Only real inventory blocks may be placed.
 7. **Stop Job** synchronously cancels pathing, breaking, pickup, reservations,
-   watchdog state, and worker tickets while retaining configuration. **Reset
+   and watchdog state while retaining configuration and the worker's persistent
+   loaded view. **Reset
    Progress** is required before rerunning a completed finite goal.
 
 The **Activity Log** shows bounded timestamped state transitions and resume
@@ -53,9 +54,13 @@ vertical radii 16/32/64/128 without hiding the editable exact values.
 
 ## Safety and operation
 
-Targets are found by an incremental chunk frontier, not an O(radius³) repeated
-scan. Frontier chunks inside the configured area are requested, observed until
-loaded, scanned with a 4,096-position per-worker tick budget, and released.
+Collection is driven by one long-lived, relocated Baritone `MineProcess`; the
+controller does not run a second target scanner or path planner. Loaded chunk
+palettes are copied on the server thread, scanned on a separate bounded worker
+pool, and merged into Baritone's world cache. Equivalent rebuilt mining goals
+are stabilized so asynchronous paths publish once instead of being recalculated
+every tick. Empty unlimited searches stay paused and rescan once per second
+instead of canceling and restarting.
 Candidate interaction stances use hypothetical eye position, reach, support,
 collision, and line of sight; the worker does not need to see the resource from
 its current position before considering it. Work areas default to the maximum
@@ -70,11 +75,20 @@ enchantments, durability, break animation, game rules, hooks, and normal
 `ItemEntity` drops are preserved. The worker physically collects those drops.
 Baritone movement handles ordinary travel, jumps, parkour, pillaring, bridging,
 obstruction clearing, and water routes from immutable loaded-chunk/inventory
-snapshots. Path state is explicit (`CALCULATING`, `PATH_FOUND`, `EXECUTING`,
+snapshots. Vanilla look and movement controls yield to Baritone while a job is
+active, preserving the exact client-side yaw, pitch, analogue input, and sprint
+math used by its interaction gates. Path state is explicit (`CALCULATING`, `PATH_FOUND`, `EXECUTING`,
 `ARRIVED`, `NO_PATH`, `CANCELLED`, or `FAILED`), and stale asynchronous results
-cannot revive a cancelled goal. Worker route tickets are capped at 16 and
-frontier search tickets at 4, so an active job can continue while its owner is
-offline without unbounded chunk retention.
+cannot revive a cancelled goal. Each placed worker owns an exact centered
+Chebyshev radius-12 loaded view (25 by 25 chunks) while idle, stopped, active,
+or owner-offline; vanilla simulation-distance rules still determine full
+ticking. Path calculations and scans use separate fair bounded executors so
+discovery cannot starve A* work.
+
+The worker itself is the canonical 27/54-slot container. Its owner can open the
+same server-authoritative inventory remotely from the dashboard anywhere in the
+same dimension; non-owners and cross-dimension access are rejected. Menu reads,
+tool selection, placement, pickup, NBT, and deposits all use that one container.
 
 ## Build and verification
 
@@ -85,6 +99,6 @@ offline without unbounded chunk retention.
 ```
 
 The build produces one universal runtime JAR and a source JAR. See
-[SPEC.md](SPEC.md), [EVIDENCE.md](EVIDENCE.md), and
-[docs/v2-architecture.md](docs/v2-architecture.md) for the acceptance contract,
-history audit, and verification record.
+[SPEC.md](SPEC.md), [the 3.1 implementation spec](docs/3.1-implementation-spec.md),
+and [3.1 verification evidence](EVIDENCE-3.1.md) for the acceptance contract and
+verification record.

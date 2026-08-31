@@ -26,6 +26,7 @@ import java.util.Set;
 import net.minecraft.world.entity.LivingEntity;
 
 public final class InputOverrideHandler extends Behavior implements IInputOverrideHandler {
+   private static final float PLAYER_DIRECTIONAL_MAGNITUDE = 1.0F;
    private final Set<Input> inputForceStateMap = EnumSet.noneOf(Input.class);
    private final BlockBreakHelper blockBreakHelper;
    private final BlockPlaceHelper blockPlaceHelper;
@@ -55,7 +56,7 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
 
    @Override
    public final synchronized void clearAllKeys() {
-      if (this.ctx.entity().isSprinting()) {
+      if (this.ctx.entity().isSprinting() && !this.baritone.getPathingBehavior().isPathing()) {
          this.ctx.entity().setSprinting(false);
       }
 
@@ -80,21 +81,20 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
          entity.zza = 0.0F;
          entity.setShiftKeyDown(false);
          entity.setJumping(this.isInputForcedDown(Input.JUMP));
-         float speed = 0.3F;
          if (this.isInputForcedDown(Input.MOVE_FORWARD)) {
-            entity.zza += speed;
+            entity.zza += PLAYER_DIRECTIONAL_MAGNITUDE;
          }
 
          if (this.isInputForcedDown(Input.MOVE_BACK)) {
-            entity.zza -= speed;
+            entity.zza -= PLAYER_DIRECTIONAL_MAGNITUDE;
          }
 
          if (this.isInputForcedDown(Input.MOVE_LEFT)) {
-            entity.xxa += speed;
+            entity.xxa += PLAYER_DIRECTIONAL_MAGNITUDE;
          }
 
          if (this.isInputForcedDown(Input.MOVE_RIGHT)) {
-            entity.xxa -= speed;
+            entity.xxa -= PLAYER_DIRECTIONAL_MAGNITUDE;
          }
 
          if (this.isInputForcedDown(Input.SNEAK)) {

@@ -20,6 +20,7 @@ package dev.dudie.baritonehelper.internal.baritone.utils;
 import dev.dudie.baritonehelper.internal.baritone.api.IBaritone;
 import dev.dudie.baritonehelper.internal.baritone.BaritoneEntity;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.IInventoryProvider;
+import dev.dudie.baritonehelper.internal.baritone.api.entity.LivingEntityInventory;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -55,10 +56,11 @@ public class ToolSet {
          ? holder.baritoneEngine()
          : throwMissingEngine(player);
       IInventoryProvider inventoryProvider = (IInventoryProvider)player;
-      this.selectedSlot = inventoryProvider.getLivingInventory().selectedSlot;
-      List<ItemStack> hotbarCopy = new ArrayList<>(9);
-      for (int index = 0; index < 9; index++) {
-         hotbarCopy.add(inventoryProvider.getLivingInventory().getItem(index).copy());
+      LivingEntityInventory inventory = inventoryProvider.getLivingInventory();
+      this.selectedSlot = Math.max(0, Math.min(LivingEntityInventory.getHotbarSize() - 1, inventory.selectedSlot));
+      List<ItemStack> hotbarCopy = new ArrayList<>(LivingEntityInventory.getHotbarSize());
+      for (int index = 0; index < LivingEntityInventory.getHotbarSize(); index++) {
+         hotbarCopy.add(inventory.getItem(index).copy());
       }
       this.hotbar = List.copyOf(hotbarCopy);
       this.disableAutoTool = baritone.settings().disableAutoTool.get();
@@ -91,22 +93,29 @@ public class ToolSet {
    }
 
    public int getBestSlot(Block b, boolean preferSilkTouch) {
-      return this.getBestSlot(b, preferSilkTouch, false);
+      return this.getBestSlot(b.defaultBlockState(), preferSilkTouch, false);
    }
 
    public int getBestSlot(Block b, boolean preferSilkTouch, boolean pathingCalculation) {
-      if (b.defaultBlockState().getBlock().defaultDestroyTime() == 0.0F) {
+      return this.getBestSlot(b.defaultBlockState(), preferSilkTouch, pathingCalculation);
+   }
+
+   public int getBestSlot(BlockState blockState, boolean preferSilkTouch) {
+      return this.getBestSlot(blockState, preferSilkTouch, false);
+   }
+
+   public int getBestSlot(BlockState blockState, boolean preferSilkTouch, boolean pathingCalculation) {
+      if (blockState.getDestroySpeed(null, null) == 0.0F) {
          return this.selectedSlot;
       } else if (this.disableAutoTool && pathingCalculation) {
          return this.selectedSlot;
       } else {
-         int best = 0;
+         int best = this.selectedSlot;
          double highestSpeed = Double.NEGATIVE_INFINITY;
          int lowestCost = Integer.MIN_VALUE;
          boolean bestSilkTouch = false;
-         BlockState blockState = b.defaultBlockState();
 
-         for (int i = 0; i < 9; i++) {
+         for (int i = 0; i < LivingEntityInventory.getHotbarSize(); i++) {
             ItemStack itemStack = this.hotbar.get(i);
             if ((this.useSwordToMine || !(itemStack.getItem() instanceof SwordItem))
                && (!this.itemSaver || itemStack.getDamageValue() < itemStack.getMaxDamage() || itemStack.getMaxDamage() <= 1)) {

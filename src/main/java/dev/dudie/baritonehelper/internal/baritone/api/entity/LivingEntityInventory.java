@@ -42,6 +42,7 @@ import net.minecraft.world.entity.EquipmentSlot.Type;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.StackedContents;
 import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
@@ -49,6 +50,7 @@ import dev.dudie.baritonehelper.internal.baritone.InternalBaritoneRuntime;
 import net.minecraft.core.registries.BuiltInRegistries;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.Nullable;
 
 public class LivingEntityInventory implements Container, Nameable {
    public static final Logger LOGGER = LogManager.getLogger(InternalBaritoneRuntime.MOD_NAME);
@@ -59,24 +61,71 @@ public class LivingEntityInventory implements Container, Nameable {
    public static final int NOT_FOUND = -1;
    public static final int[] ARMOR_SLOTS = new int[]{0, 1, 2, 3};
    public static final int[] HELMET_SLOTS = new int[]{3};
-   public final NonNullList<ItemStack> main = NonNullList.withSize(36, ItemStack.EMPTY);
-   public final NonNullList<ItemStack> armor = NonNullList.withSize(4, ItemStack.EMPTY);
-   public final NonNullList<ItemStack> offHand = NonNullList.withSize(1, ItemStack.EMPTY);
-   private final List<NonNullList<ItemStack>> combinedInventory = ImmutableList.of(this.main, this.armor, this.offHand);
+   public final NonNullList<ItemStack> main;
+   public final NonNullList<ItemStack> armor;
+   public final NonNullList<ItemStack> offHand;
+   private final List<NonNullList<ItemStack>> combinedInventory;
+   @Nullable
+   private final Container backingInventory;
    public int selectedSlot;
    public LivingEntity player;
    private int changeCount;
 
    public LivingEntityInventory(LivingEntity player) {
+      this(player, player instanceof Container container ? container : null);
+   }
+
+   /**
+    * Creates a view over an entity's existing inventory when one is available.
+    * The view is deliberately list-shaped because Baritone accesses {@link #main}
+    * directly, but every list mutation still goes to the canonical Container.
+    */
+   public LivingEntityInventory(LivingEntity player, @Nullable Container backingInventory) {
       this.player = player;
+      this.backingInventory = backingInventory;
+      if (backingInventory == null) {
+         this.main = NonNullList.withSize(MAIN_SIZE, ItemStack.EMPTY);
+         this.armor = NonNullList.withSize(4, ItemStack.EMPTY);
+         this.offHand = NonNullList.withSize(1, ItemStack.EMPTY);
+      } else {
+         this.main = new CanonicalList(this, backingInventory);
+         this.armor = NonNullList.create();
+         this.offHand = NonNullList.create();
+      }
+      this.combinedInventory = ImmutableList.of(this.main, this.armor, this.offHand);
    }
 
    public ItemStack getMainHandStack() {
-      return isValidHotbarIndex(this.selectedSlot) ? (ItemStack)this.main.get(this.selectedSlot) : ItemStack.EMPTY;
+      this.normalizeSelectedSlot();
+      return this.selectedSlot < this.main.size() ? this.main.get(this.selectedSlot) : ItemStack.EMPTY;
    }
 
    public static int getHotbarSize() {
-      return 9;
+      return HOTBAR_SIZE;
+   }
+
+   public void setSelectedSlot(int slot) {
+      this.selectedSlot = Math.max(0, Math.min(HOTBAR_SIZE - 1, slot));
+   }
+
+   private void normalizeSelectedSlot() {
+      this.setSelectedSlot(this.selectedSlot);
+   }
+
+   public ItemStack getStackInHand(InteractionHand hand) {
+      if (hand == InteractionHand.MAIN_HAND) {
+         return this.getMainHandStack();
+      }
+      return this.offHand.isEmpty() ? ItemStack.EMPTY : this.offHand.get(0);
+   }
+
+   public void setStackInHand(InteractionHand hand, ItemStack stack) {
+      if (hand == InteractionHand.MAIN_HAND) {
+         this.normalizeSelectedSlot();
+         this.setItem(this.selectedSlot, stack);
+      } else if (!this.offHand.isEmpty()) {
+         this.setItem(this.main.size() + this.armor.size(), stack);
+      }
    }
 
    private boolean canStackAddMore(ItemStack existingStack, ItemStack stack) {
@@ -89,7 +138,7 @@ public class LivingEntityInventory implements Container, Nameable {
 
    public int getEmptySlot() {
       for (int i = 0; i < this.main.size(); i++) {
-         if (((ItemStack)this.main.get(i)).isEmpty()) {
+         if (this.main.get(i).isEmpty()) {
             return i;
          }
       }
@@ -100,36 +149,39 @@ public class LivingEntityInventory implements Container, Nameable {
    public void addPickBlock(ItemStack stack) {
       int i = this.getSlotWithStack(stack);
       if (isValidHotbarIndex(i)) {
-         this.selectedSlot = i;
+         this.setSelectedSlot(i);
       } else if (i == -1) {
-         this.selectedSlot = this.getSwappableHotbarSlot();
-         if (!((ItemStack)this.main.get(this.selectedSlot)).isEmpty()) {
+         this.setSelectedSlot(this.getSwappableHotbarSlot());
+         if (!this.getItem(this.selectedSlot).isEmpty()) {
             int j = this.getEmptySlot();
             if (j != -1) {
-               this.main.set(j, (ItemStack)this.main.get(this.selectedSlot));
+               this.setItem(j, this.getItem(this.selectedSlot));
             }
          }
 
-         this.main.set(this.selectedSlot, stack);
+         this.setItem(this.selectedSlot, stack);
       } else {
          this.swapSlotWithHotbar(i);
       }
    }
 
    public void swapSlotWithHotbar(int slot) {
-      this.selectedSlot = this.getSwappableHotbarSlot();
-      ItemStack itemStack = (ItemStack)this.main.get(this.selectedSlot);
-      this.main.set(this.selectedSlot, (ItemStack)this.main.get(slot));
-      this.main.set(slot, itemStack);
+      if (slot < 0 || slot >= this.main.size()) {
+         return;
+      }
+      this.setSelectedSlot(this.getSwappableHotbarSlot());
+      ItemStack itemStack = this.getItem(this.selectedSlot);
+      this.setItem(this.selectedSlot, this.getItem(slot));
+      this.setItem(slot, itemStack);
    }
 
    public static boolean isValidHotbarIndex(int slot) {
-      return slot >= 0 && slot < 9;
+      return slot >= 0 && slot < HOTBAR_SIZE;
    }
 
    public int getSlotWithStack(ItemStack stack) {
       for (int i = 0; i < this.main.size(); i++) {
-         if (!((ItemStack)this.main.get(i)).isEmpty() && ItemStack.isSameItemSameComponents(stack, (ItemStack)this.main.get(i))) {
+         if (!this.main.get(i).isEmpty() && ItemStack.isSameItemSameComponents(stack, this.main.get(i))) {
             return i;
          }
       }
@@ -139,10 +191,10 @@ public class LivingEntityInventory implements Container, Nameable {
 
    public int indexOf(ItemStack stack) {
       for (int i = 0; i < this.main.size(); i++) {
-         ItemStack itemStack = (ItemStack)this.main.get(i);
-         if (!((ItemStack)this.main.get(i)).isEmpty()
-            && ItemStack.isSameItemSameComponents(stack, (ItemStack)this.main.get(i))
-            && !((ItemStack)this.main.get(i)).isDamaged()
+         ItemStack itemStack = this.main.get(i);
+         if (!itemStack.isEmpty()
+            && ItemStack.isSameItemSameComponents(stack, itemStack)
+            && !itemStack.isDamaged()
             && !itemStack.isEnchanted()
             && !itemStack.has(DataComponents.CUSTOM_NAME)) {
             return i;
@@ -153,34 +205,28 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public int getSwappableHotbarSlot() {
-      for (int i = 0; i < 9; i++) {
-         int j = (this.selectedSlot + i) % 9;
-         if (((ItemStack)this.main.get(j)).isEmpty()) {
+      this.normalizeSelectedSlot();
+      int hotbarSize = Math.min(HOTBAR_SIZE, this.main.size());
+      for (int i = 0; i < hotbarSize; i++) {
+         int j = (this.selectedSlot + i) % hotbarSize;
+         if (this.main.get(j).isEmpty()) {
             return j;
          }
       }
 
-      for (int ix = 0; ix < 9; ix++) {
-         int j = (this.selectedSlot + ix) % 9;
-         if (!((ItemStack)this.main.get(j)).isEnchanted()) {
+      for (int ix = 0; ix < hotbarSize; ix++) {
+         int j = (this.selectedSlot + ix) % hotbarSize;
+         if (!this.main.get(j).isEnchanted()) {
             return j;
          }
       }
 
-      return this.selectedSlot;
+      return hotbarSize == 0 ? 0 : this.selectedSlot % hotbarSize;
    }
 
    public void scrollInHotbar(double scrollAmount) {
       int i = (int)Math.signum(scrollAmount);
-      this.selectedSlot -= i;
-
-      while (this.selectedSlot < 0) {
-         this.selectedSlot += 9;
-      }
-
-      while (this.selectedSlot >= 9) {
-         this.selectedSlot -= 9;
-      }
+      this.setSelectedSlot(Math.floorMod(this.selectedSlot - i, HOTBAR_SIZE));
    }
 
    public int remove(Predicate<ItemStack> shouldRemove, int maxCount, Container craftingInventory) {
@@ -225,18 +271,20 @@ public class LivingEntityInventory implements Container, Nameable {
          i -= j;
          itemStack.grow(j);
          itemStack.setPopTime(5);
+         this.setChanged();
          return i;
       }
    }
 
    public int getOccupiedSlotWithRoomForStack(ItemStack stack) {
-      if (this.canStackAddMore(this.getItem(this.selectedSlot), stack)) {
+      this.normalizeSelectedSlot();
+      if (this.canStackAddMore(this.getMainHandStack(), stack)) {
          return this.selectedSlot;
-      } else if (this.canStackAddMore(this.getItem(40), stack)) {
-         return 40;
+      } else if (this.offHand.size() == 1 && this.canStackAddMore(this.offHand.get(0), stack)) {
+         return OFF_HAND_SLOT;
       } else {
          for (int i = 0; i < this.main.size(); i++) {
-            if (this.canStackAddMore((ItemStack)this.main.get(i), stack)) {
+            if (this.canStackAddMore(this.main.get(i), stack)) {
                return i;
             }
          }
@@ -248,8 +296,8 @@ public class LivingEntityInventory implements Container, Nameable {
    public void updateItems() {
       for (NonNullList<ItemStack> defaultedList : this.combinedInventory) {
          for (int i = 0; i < defaultedList.size(); i++) {
-            if (!((ItemStack)defaultedList.get(i)).isEmpty()) {
-               ((ItemStack)defaultedList.get(i)).inventoryTick(this.player.level(), this.player, i, this.selectedSlot == i);
+            if (!defaultedList.get(i).isEmpty()) {
+               defaultedList.get(i).inventoryTick(this.player.level(), this.player, i, this.selectedSlot == i);
             }
          }
       }
@@ -260,7 +308,7 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public boolean insertStack(int slot, ItemStack stack) {
-      if (stack.isEmpty()) {
+      if (stack == null || stack.isEmpty()) {
          return false;
       } else {
          try {
@@ -270,8 +318,9 @@ public class LivingEntityInventory implements Container, Nameable {
                }
 
                if (slot >= 0) {
-                  this.main.set(slot, stack.copyAndClear());
-                  ((ItemStack)this.main.get(slot)).setPopTime(5);
+                  this.setItem(slot, stack.copyAndClear());
+                  this.getItem(slot).setPopTime(5);
+                  this.setChanged();
                   return true;
                } else {
                   return false;
@@ -301,71 +350,84 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public ItemStack removeItem(int slot, int amount) {
-      List<ItemStack> list = null;
-
-      for (NonNullList<ItemStack> defaultedList : this.combinedInventory) {
-         if (slot < defaultedList.size()) {
-            list = defaultedList;
-            break;
-         }
-
-         slot -= defaultedList.size();
+      if (slot < 0 || slot >= this.getContainerSize() || amount <= 0) {
+         return ItemStack.EMPTY;
       }
 
-      return list != null && !list.get(slot).isEmpty() ? ContainerHelper.removeItem(list, slot, amount) : ItemStack.EMPTY;
+      ItemStack existing = this.getItem(slot);
+      if (existing.isEmpty()) {
+         return ItemStack.EMPTY;
+      }
+
+      ItemStack removed = existing.split(amount);
+      this.setItem(slot, existing);
+      return removed;
    }
 
    public void removeOne(ItemStack stack) {
+      int offset = 0;
       for (NonNullList<ItemStack> defaultedList : this.combinedInventory) {
          for (int i = 0; i < defaultedList.size(); i++) {
             if (defaultedList.get(i) == stack) {
-               defaultedList.set(i, ItemStack.EMPTY);
+               if (defaultedList == this.main) {
+                  this.setItem(offset + i, ItemStack.EMPTY);
+               } else {
+                  defaultedList.set(i, ItemStack.EMPTY);
+                  this.setChanged();
+               }
                break;
             }
          }
+         offset += defaultedList.size();
       }
    }
 
    public ItemStack removeItemNoUpdate(int slot) {
-      NonNullList<ItemStack> defaultedList = null;
-
-      for (NonNullList<ItemStack> defaultedList2 : this.combinedInventory) {
-         if (slot < defaultedList2.size()) {
-            defaultedList = defaultedList2;
-            break;
-         }
-
-         slot -= defaultedList2.size();
-      }
-
-      if (defaultedList != null && !((ItemStack)defaultedList.get(slot)).isEmpty()) {
-         ItemStack itemStack = (ItemStack)defaultedList.get(slot);
-         defaultedList.set(slot, ItemStack.EMPTY);
-         return itemStack;
-      } else {
+      if (slot < 0 || slot >= this.getContainerSize()) {
          return ItemStack.EMPTY;
       }
+      if (this.backingInventory != null) {
+         return this.backingInventory.removeItemNoUpdate(slot);
+      }
+
+      ItemStack itemStack = this.getItem(slot);
+      if (!itemStack.isEmpty()) {
+         this.setItem(slot, ItemStack.EMPTY);
+         return itemStack;
+      }
+      return ItemStack.EMPTY;
    }
 
    public void setItem(int slot, ItemStack stack) {
-      NonNullList<ItemStack> defaultedList = null;
-
-      for (NonNullList<ItemStack> defaultedList2 : this.combinedInventory) {
-         if (slot < defaultedList2.size()) {
-            defaultedList = defaultedList2;
-            break;
-         }
-
-         slot -= defaultedList2.size();
+      if (slot < 0 || slot >= this.getContainerSize()) {
+         return;
+      }
+      if (stack == null) {
+         stack = ItemStack.EMPTY;
+      }
+      int limit = Math.min(this.getMaxStackSize(), stack.getMaxStackSize());
+      if (stack.getCount() > limit) {
+         stack = stack.copyWithCount(limit);
       }
 
-      if (defaultedList != null) {
-         defaultedList.set(slot, stack);
+      if (this.backingInventory != null) {
+         this.backingInventory.setItem(slot, stack);
+         return;
+      }
+
+      int remaining = slot;
+      for (NonNullList<ItemStack> defaultedList : this.combinedInventory) {
+         if (remaining < defaultedList.size()) {
+            defaultedList.set(remaining, stack);
+            this.setChanged();
+            return;
+         }
+         remaining -= defaultedList.size();
       }
    }
 
    public float getBlockBreakingSpeed(BlockState block) {
-      return ((ItemStack)this.main.get(this.selectedSlot)).getDestroySpeed(block);
+      return this.getMainHandStack().getDestroySpeed(block);
    }
 
    private void writeItemTag(HolderLookup.Provider levelRegistryAccess, ItemStack stack, ListTag nbtList, int index){
@@ -414,9 +476,7 @@ public class LivingEntityInventory implements Container, Nameable {
    }
    public void readNbt(HolderLookup.Provider levelRegistryAccess, ListTag nbtList) {
       LOGGER.info("writeNBT inventory");
-      this.main.clear();
-      this.armor.clear();
-      this.offHand.clear();
+      this.clearContent();
       
       for (int i = 0; i < nbtList.size(); i++) {
          CompoundTag nbtCompound = nbtList.getCompound(i);
@@ -437,7 +497,9 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public int getContainerSize() {
-      return this.main.size() + this.armor.size() + this.offHand.size();
+      return this.backingInventory == null
+         ? this.main.size() + this.armor.size() + this.offHand.size()
+         : this.backingInventory.getContainerSize();
    }
 
    public boolean isEmpty() {
@@ -463,18 +525,22 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public ItemStack getItem(int slot) {
-      List<ItemStack> list = null;
-
-      for (NonNullList<ItemStack> defaultedList : this.combinedInventory) {
-         if (slot < defaultedList.size()) {
-            list = defaultedList;
-            break;
-         }
-
-         slot -= defaultedList.size();
+      if (slot < 0 || slot >= this.getContainerSize()) {
+         return ItemStack.EMPTY;
+      }
+      if (this.backingInventory != null) {
+         ItemStack stack = this.backingInventory.getItem(slot);
+         return stack == null ? ItemStack.EMPTY : stack;
       }
 
-      return list == null ? ItemStack.EMPTY : list.get(slot);
+      int remaining = slot;
+      for (NonNullList<ItemStack> defaultedList : this.combinedInventory) {
+         if (remaining < defaultedList.size()) {
+            return defaultedList.get(remaining);
+         }
+         remaining -= defaultedList.size();
+      }
+      return ItemStack.EMPTY;
    }
 
    public Component getName() {
@@ -482,7 +548,7 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public ItemStack getArmorStack(int slot) {
-      return (ItemStack)this.armor.get(slot);
+      return slot >= 0 && slot < this.armor.size() ? this.armor.get(slot) : ItemStack.EMPTY;
    }
 
    public void damageArmor(DamageSource damageSource, float amount, int[] slots) {
@@ -492,29 +558,33 @@ public class LivingEntityInventory implements Container, Nameable {
             amount = 1.0F;
          }
 
-         for (int i : slots) {
-            ItemStack itemStack = (ItemStack)this.armor.get(i);
+          for (int i : slots) {
+            if (i < 0 || i >= this.armor.size()) {
+               continue;
+            }
+            ItemStack itemStack = this.armor.get(i);
             if ((!damageSource.is(DamageTypeTags.IS_FIRE) || !itemStack.getItem().components().has(DataComponents.FIRE_RESISTANT)) && itemStack.getItem() instanceof ArmorItem) {
-               itemStack.hurtAndBreak((int)amount, this.player, player.getEquipmentSlotForItem(itemStack));
+               itemStack.hurtAndBreak((int)amount, this.player, this.player.getEquipmentSlotForItem(itemStack));
             }
          }
       }
    }
 
    public void dropAll() {
-      for (List<ItemStack> list : this.combinedInventory) {
-         for (int i = 0; i < list.size(); i++) {
-            ItemStack itemStack = list.get(i);
-            if (!itemStack.isEmpty()) {
-               this.player.spawnAtLocation(itemStack);
-               list.set(i, ItemStack.EMPTY);
-            }
+      for (int slot = 0; slot < this.getContainerSize(); slot++) {
+         ItemStack itemStack = this.getItem(slot);
+         if (!itemStack.isEmpty()) {
+            this.player.spawnAtLocation(itemStack);
+            this.setItem(slot, ItemStack.EMPTY);
          }
       }
    }
 
    public void setChanged() {
       this.changeCount++;
+      if (this.backingInventory != null) {
+         this.backingInventory.setChanged();
+      }
    }
 
    public int getChangeCount() {
@@ -550,17 +620,30 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public void clone(LivingEntityInventory other) {
-      for (int i = 0; i < this.getContainerSize(); i++) {
-         this.setItem(i, other.getItem(i));
+      int size = Math.min(this.getContainerSize(), other.getContainerSize());
+      for (int i = 0; i < size; i++) {
+         this.setItem(i, other.getItem(i).copy());
+      }
+      for (int i = size; i < this.getContainerSize(); i++) {
+         this.setItem(i, ItemStack.EMPTY);
       }
 
-      this.selectedSlot = other.selectedSlot;
+      this.setSelectedSlot(other.selectedSlot);
    }
 
    public void clearContent() {
-      for (List<ItemStack> list : this.combinedInventory) {
-         list.clear();
+      if (this.backingInventory != null) {
+         this.backingInventory.clearContent();
+         this.changeCount++;
+         return;
       }
+
+      for (NonNullList<ItemStack> list : this.combinedInventory) {
+         for (int i = 0; i < list.size(); i++) {
+            list.set(i, ItemStack.EMPTY);
+         }
+      }
+      this.setChanged();
    }
 
    public void populateRecipeFinder(StackedContents finder) {
@@ -570,7 +653,63 @@ public class LivingEntityInventory implements Container, Nameable {
    }
 
    public ItemStack dropSelectedItem(boolean entireStack) {
+      this.normalizeSelectedSlot();
       ItemStack itemStack = this.getMainHandStack();
       return itemStack.isEmpty() ? ItemStack.EMPTY : this.removeItem(this.selectedSlot, entireStack ? itemStack.getCount() : 1);
+   }
+
+   private static final class CanonicalList extends NonNullList<ItemStack> {
+      private final LivingEntityInventory owner;
+      private final Container backingInventory;
+
+      private CanonicalList(LivingEntityInventory owner, Container backingInventory) {
+         super(List.of(), ItemStack.EMPTY);
+         this.owner = owner;
+         this.backingInventory = backingInventory;
+      }
+
+      @Override
+      public ItemStack get(int index) {
+         this.checkIndex(index);
+         ItemStack stack = this.backingInventory.getItem(index);
+         return stack == null ? ItemStack.EMPTY : stack;
+      }
+
+      @Override
+      public ItemStack set(int index, ItemStack stack) {
+         this.checkIndex(index);
+         ItemStack previous = this.get(index);
+         this.owner.setItem(index, stack);
+         return previous;
+      }
+
+      @Override
+      public void add(int index, ItemStack stack) {
+         throw new UnsupportedOperationException("A canonical inventory has fixed slots");
+      }
+
+      @Override
+      public ItemStack remove(int index) {
+         this.checkIndex(index);
+         ItemStack previous = this.get(index);
+         this.backingInventory.removeItemNoUpdate(index);
+         return previous;
+      }
+
+      @Override
+      public int size() {
+         return this.backingInventory.getContainerSize();
+      }
+
+      @Override
+      public void clear() {
+         this.owner.clearContent();
+      }
+
+      private void checkIndex(int index) {
+         if (index < 0 || index >= this.size()) {
+            throw new IndexOutOfBoundsException("index=" + index + ", size=" + this.size());
+         }
+      }
    }
 }

@@ -51,7 +51,7 @@ public final class RayTraceUtils {
    public static Vec3 inferSneakingEyePosition(Entity entity) {
       return new Vec3(
          entity.getX(),
-         entity.getY() + ((IEntityAccessor)entity).automatone$invokeGetEyeHeight(Pose.CROUCHING),
+         entity.getY() + entity.getEyeHeight(Pose.CROUCHING),
          entity.getZ()
       );
    }

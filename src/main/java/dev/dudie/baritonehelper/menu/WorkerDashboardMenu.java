@@ -58,8 +58,17 @@ public final class WorkerDashboardMenu extends AbstractContainerMenu {
 
     @Override
     public boolean clickMenuButton(Player player, int buttonId) {
-        if (!(player instanceof ServerPlayer serverPlayer)
-                || worker == null || !worker.isAlive() || !worker.isOwnedByPlayer(player)) return false;
+        if (!(player instanceof ServerPlayer serverPlayer) || worker == null) return false;
+        if (!worker.canOpenInventory(player)) {
+            if (buttonId == BUTTON_OPEN_INVENTORY
+                    && worker.isAlive()
+                    && worker.isOwnedByPlayer(player)
+                    && player.level() != worker.level()) {
+                WorkerMessages.send(serverPlayer, ChatFormatting.RED,
+                        "message.baritonehelper.other_dimension");
+            }
+            return false;
+        }
         switch (buttonId) {
             case BUTTON_START -> handleStart(serverPlayer);
             case BUTTON_STOP -> handleStop(serverPlayer);
@@ -73,8 +82,10 @@ public final class WorkerDashboardMenu extends AbstractContainerMenu {
                         cleared ? "message.baritonehelper.storage_cleared" : "message.baritonehelper.storage_already_clear");
             }
             case BUTTON_OPEN_INVENTORY -> {
-                serverPlayer.closeContainer();
-                serverPlayer.openMenu(worker);
+                if (serverPlayer.openMenu(worker).isEmpty()) {
+                    WorkerMessages.send(serverPlayer, ChatFormatting.RED,
+                            "message.baritonehelper.command_failed");
+                }
             }
             default -> { return false; }
         }
@@ -100,6 +111,6 @@ public final class WorkerDashboardMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        return worker == null || worker.isAlive() && worker.isOwnedByPlayer(player) && player.level() == worker.level();
+        return worker == null || worker.canOpenInventory(player);
     }
 }

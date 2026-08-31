@@ -29,5 +29,6 @@ jobs:
       - name: Build release jar
         run: |
           ./gradlew build --no-daemon --console=plain
-          test -f build/libs/baritonehelper-2.0.0.jar
-          test -f build/libs/baritonehelper-2.0.0-sources.jar
+          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+          test -f "build/libs/baritonehelper-$VERSION.jar"
+          test -f "build/libs/baritonehelper-$VERSION-sources.jar"

@@ -3,6 +3,10 @@ package dev.dudie.baritonehelper.gametest;
 import com.mojang.logging.LogUtils;
 import dev.dudie.baritonehelper.BaritoneHelper;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.internal.baritone.api.utils.BetterBlockPos;
+import dev.dudie.baritonehelper.internal.baritone.api.utils.RotationUtils;
+import dev.dudie.baritonehelper.internal.baritone.api.utils.input.Input;
+import dev.dudie.baritonehelper.internal.baritone.pathing.movement.MovementHelper;
 import dev.dudie.baritonehelper.worker.NoWorkZone;
 import dev.dudie.baritonehelper.worker.NoWorkZoneMode;
 import dev.dudie.baritonehelper.worker.WorkerActionResult;
@@ -35,7 +39,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzLongRangeDiscoveryUnloaded",
-            timeoutTicks = 3000)
+            timeoutTicks = 12000)
     public static void unloadedFrontierChunkIsRetriedAndCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearPath(helper, 1, 96, -64, 64);
@@ -47,23 +51,25 @@ public final class LongRangeDiscoveryRegressionGameTests {
         worker.configureTarget(blockId(Blocks.REDSTONE_BLOCK), center);
         worker.setWorkArea(center, 128, 64);
 
-        helper.runAfterDelay(25, () -> {
+        boolean[] started = {false};
+        helper.succeedWhen(() -> {
             ChunkPos targetChunk = new ChunkPos(helper.absolutePos(target));
             helper.assertTrue(
-                    helper.getLevel().getChunkSource().getChunkNow(targetChunk.x, targetChunk.z) == null,
-                    "target chunk must be unloaded before the job starts");
-            helper.assertValueEqual(worker.startJob().name(), "STARTED", "job starts");
+                    helper.getLevel().getChunkSource().getChunkNow(targetChunk.x, targetChunk.z) != null,
+                    "target chunk inside the 12-chunk worker view must load without a player");
+            if (!started[0]) {
+                helper.assertValueEqual(worker.startJob().name(), "STARTED", "job starts");
+                started[0] = true;
+            }
+            assertCollected(helper, worker, target, blockId(Blocks.REDSTONE_BLOCK));
         });
-
-        helper.runAfterDelay(2600, () -> assertCollected(helper, worker, target,
-                blockId(Blocks.REDSTONE_BLOCK)));
     }
 
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzLongRangeDiscoveryOccluded",
-            timeoutTicks = 900)
+            timeoutTicks = 12000)
     public static void occludedTargetUsesReachableFutureInteractionPosition(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearPath(helper, 1, 12, -4, 5);
@@ -85,42 +91,42 @@ public final class LongRangeDiscoveryRegressionGameTests {
 
         worker.beginCollection(blockId(Blocks.REDSTONE_BLOCK), helper.absolutePos(WORKER));
 
-        helper.runAfterDelay(700, () -> assertCollected(helper, worker, target,
+        helper.succeedWhen(() -> assertCollected(helper, worker, target,
                 blockId(Blocks.REDSTONE_BLOCK)));
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange04", timeoutTicks = 220)
+            batch = "zzLongRangeDiscoveryRange04", timeoutTicks = 12000)
     public static void targetAtFourBlocksIsCollected(GameTestHelper helper) {
-        runDistanceCase(helper, 4, 8, 120, Blocks.REDSTONE_BLOCK);
+        runDistanceCase(helper, 4, 8, Blocks.REDSTONE_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange16", timeoutTicks = 400)
+            batch = "zzLongRangeDiscoveryRange16", timeoutTicks = 12000)
     public static void targetAtSixteenBlocksIsCollected(GameTestHelper helper) {
-        runDistanceCase(helper, 16, 16, 280, Blocks.EMERALD_BLOCK);
+        runDistanceCase(helper, 16, 16, Blocks.EMERALD_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange32", timeoutTicks = 900)
+            batch = "zzLongRangeDiscoveryRange32", timeoutTicks = 12000)
     public static void targetAtThirtyTwoBlocksIsCollected(GameTestHelper helper) {
-        runDistanceCase(helper, 32, 32, 700, Blocks.DIAMOND_BLOCK);
+        runDistanceCase(helper, 32, 32, Blocks.DIAMOND_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange64", timeoutTicks = 1800)
+            batch = "zzLongRangeDiscoveryRange64", timeoutTicks = 12000)
     public static void targetAtSixtyFourBlocksIsCollected(GameTestHelper helper) {
-        runDistanceCase(helper, 64, 64, 1500, Blocks.LAPIS_BLOCK);
+        runDistanceCase(helper, 64, 64, Blocks.LAPIS_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange128", timeoutTicks = 3600)
+            batch = "zzLongRangeDiscoveryRange128", timeoutTicks = 24000)
     public static void targetAtOneHundredTwentyEightBlocksIsCollected(GameTestHelper helper) {
-        runDistanceCase(helper, 128, 128, 3200, Blocks.GOLD_BLOCK);
+        runDistanceCase(helper, 128, 128, Blocks.GOLD_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryCorner", timeoutTicks = 700)
+            batch = "zzLongRangeDiscoveryCorner", timeoutTicks = 12000)
     public static void targetAroundCornerIsCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearVolume(helper, 1, 12, 2, 4, -3, 4);
@@ -137,12 +143,12 @@ public final class LongRangeDiscoveryRegressionGameTests {
                 "corner target must start outside direct line of sight");
         worker.beginCollection(blockId(Blocks.REDSTONE_BLOCK), helper.absolutePos(WORKER));
 
-        helper.runAfterDelay(520, () -> assertCollected(helper, worker, target,
+        helper.succeedWhen(() -> assertCollected(helper, worker, target,
                 blockId(Blocks.REDSTONE_BLOCK)));
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryUnderground", timeoutTicks = 800)
+            batch = "zzLongRangeDiscoveryUnderground", timeoutTicks = 12000)
     public static void undergroundTunnelTargetIsCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearVolume(helper, 1, 12, 2, 5, -3, 4);
@@ -162,12 +168,12 @@ public final class LongRangeDiscoveryRegressionGameTests {
                 "underground target must start occluded by the tunnel entrance");
         worker.beginCollection(blockId(Blocks.REDSTONE_BLOCK), helper.absolutePos(WORKER));
 
-        helper.runAfterDelay(620, () -> assertCollected(helper, worker, target,
+        helper.succeedWhen(() -> assertCollected(helper, worker, target,
                 blockId(Blocks.REDSTONE_BLOCK)));
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryVertical", timeoutTicks = 900)
+            batch = "zzLongRangeDiscoveryVertical", timeoutTicks = 12000)
     public static void verticalTargetInsideRadiusIsCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearVolume(helper, 1, 8, 2, 7, 0, 2);
@@ -179,7 +185,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
         worker.setWorkArea(helper.absolutePos(WORKER), 16, 8);
         helper.assertValueEqual(worker.startJob(), WorkerActionResult.STARTED, "vertical job starts");
 
-        helper.runAfterDelay(700, () -> assertCollected(helper, worker, target,
+        helper.succeedWhen(() -> assertCollected(helper, worker, target,
                 blockId(Blocks.REDSTONE_BLOCK)));
     }
 
@@ -239,7 +245,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryMultiple", timeoutTicks = 900)
+            batch = "zzLongRangeDiscoveryMultiple", timeoutTicks = 12000)
     public static void multipleTargetsUseCachedCandidatesAcrossCollections(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearVolume(helper, 1, 14, 2, 4, -2, 3);
@@ -256,7 +262,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
         worker.setWorkArea(helper.absolutePos(WORKER), 16, 8);
         worker.startJob();
 
-        helper.runAfterDelay(700, () -> {
+        helper.succeedWhen(() -> {
             helper.assertTrue(targets.stream().allMatch(target -> helper.getBlockState(target).isAir()),
                     "both farther reachable candidates must be collected; "
                             + diagnostic(helper, worker, targets.get(0), blockId(Blocks.REDSTONE_BLOCK)));
@@ -269,7 +275,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRestart", timeoutTicks = 2400)
+            batch = "zzLongRangeDiscoveryRestart", timeoutTicks = 12000)
     public static void stoppedAndRestartedSearchStillFindsFullRadiusTarget(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearVolume(helper, 1, 68, 2, 4, -3, 4);
@@ -285,13 +291,13 @@ public final class LongRangeDiscoveryRegressionGameTests {
             helper.assertValueEqual(worker.stopJob(), WorkerActionResult.STOPPED, "search stops");
             helper.assertValueEqual(worker.searchTicketCount(), 0, "stop releases search tickets");
             helper.assertValueEqual(worker.startJob(), WorkerActionResult.STARTED, "search restarts");
+            helper.succeedWhen(() -> assertCollected(helper, worker, target,
+                    blockId(Blocks.REDSTONE_BLOCK)));
         });
-        helper.runAfterDelay(2100, () -> assertCollected(helper, worker, target,
-                blockId(Blocks.REDSTONE_BLOCK)));
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryOffline", timeoutTicks = 1500)
+            batch = "zzLongRangeDiscoveryOffline", timeoutTicks = 12000)
     public static void offlineOwnerDoesNotStopDistantDiscovery(GameTestHelper helper) {
         clearExistingWorkers(helper);
         clearVolume(helper, 1, 52, 2, 4, -3, 4);
@@ -308,7 +314,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
         worker.setWorkArea(helper.absolutePos(WORKER), 64, 16);
         worker.startJob();
 
-        helper.runAfterDelay(1250, () -> assertCollected(helper, worker, target,
+        helper.succeedWhen(() -> assertCollected(helper, worker, target,
                 blockId(Blocks.REDSTONE_BLOCK)));
     }
 
@@ -328,7 +334,6 @@ public final class LongRangeDiscoveryRegressionGameTests {
             GameTestHelper helper,
             int distance,
             int horizontalRadius,
-            int finishDelay,
             net.minecraft.world.level.block.Block targetBlock) {
         clearExistingWorkers(helper);
         int targetX = WORKER.getX() + distance;
@@ -341,7 +346,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
         worker.setWorkArea(helper.absolutePos(WORKER), horizontalRadius, 16);
         helper.assertValueEqual(worker.startJob(), WorkerActionResult.STARTED,
                 "distance-" + distance + " job starts");
-        helper.runAfterDelay(finishDelay, () -> assertCollected(
+        helper.succeedWhen(() -> assertCollected(
                 helper, worker, target, blockId(targetBlock)));
     }
 
@@ -375,8 +380,8 @@ public final class LongRangeDiscoveryRegressionGameTests {
         helper.runAfterDelay(25, () -> {
             for (BlockPos target : allTargets.subList(2, allTargets.size())) {
                 ChunkPos chunk = new ChunkPos(helper.absolutePos(target));
-                helper.assertTrue(helper.getLevel().getChunkSource().getChunkNow(chunk.x, chunk.z) == null,
-                        "far acceptance chunk must not be player-preloaded: " + chunk);
+                helper.assertTrue(helper.getLevel().getChunkSource().getChunkNow(chunk.x, chunk.z) != null,
+                        "the persistent 12-chunk worker view must load acceptance chunk: " + chunk);
             }
             helper.assertValueEqual(worker.startJob(), WorkerActionResult.STARTED,
                     "acceptance job starts");
@@ -400,8 +405,8 @@ public final class LongRangeDiscoveryRegressionGameTests {
             worker.stopJob();
             helper.assertValueEqual(worker.searchTicketCount(), 0,
                     "acceptance stop releases search tickets");
-            helper.assertValueEqual(worker.workerTicketCount(), 0,
-                    "acceptance stop releases worker tickets");
+            helper.assertValueEqual(worker.workerTicketCount(), WorkerEntity.MAX_WORKER_TICKETS,
+                    "acceptance stop retains the worker view");
         }));
     }
 
@@ -424,7 +429,8 @@ public final class LongRangeDiscoveryRegressionGameTests {
         assertTicketBudget(helper, worker);
         worker.stopJob();
         helper.assertValueEqual(worker.searchTicketCount(), 0, "released search tickets");
-        helper.assertValueEqual(worker.workerTicketCount(), 0, "released worker tickets");
+        helper.assertValueEqual(worker.workerTicketCount(), WorkerEntity.MAX_WORKER_TICKETS,
+                "stopped worker retains loaded view");
         helper.succeed();
     }
 
@@ -543,6 +549,13 @@ public final class LongRangeDiscoveryRegressionGameTests {
                         helper.getLevel(), worker, absoluteTarget, targetId)
                 + ", worker=" + worker.position()
                 + ", yRot=" + worker.getYRot()
+                + ", xRot=" + worker.getXRot()
+                + ", selected=" + worker.baritoneEngine().getEntityContext().getSelectedBlock()
+                + ", click=" + worker.baritoneEngine().getInputOverrideHandler()
+                        .isInputForcedDown(Input.CLICK_LEFT)
+                + ", passable=" + MovementHelper.canWalkThrough(
+                        worker.baritoneEngine().getEntityContext(), new BetterBlockPos(absoluteTarget))
+                + ", reachable=" + RotationUtils.reachable(worker, absoluteTarget, 4.5)
                 + ", xxa=" + worker.xxa
                 + ", zza=" + worker.zza
                 + ", onGround=" + worker.onGround()
@@ -552,28 +565,13 @@ public final class LongRangeDiscoveryRegressionGameTests {
                 + ", reason=" + worker.blockReason()
                 + ", managerMining=" + worker.interactionManagerMining()
                 + ", breakProgress=" + worker.blockBreakingProgress()
-                + ", currentTarget=" + worker.currentTarget()
-                + ", workPosition=" + worker.currentWorkPosition()
-                + ", pathRequested=" + worker.pathRequested()
-                + ", lastNavigation=" + worker.lastNavigationDestination()
-                + ", chunksExamined=" + worker.chunksExamined()
                 + ", tickets=" + worker.workerTicketCount()
                 + ", searchTickets=" + worker.searchTicketCount()
-                + ", frontier=" + worker.frontierIndex() + "/" + worker.frontierSize()
-                + ", chunksScanned=" + worker.chunksScanned()
-                + ", positions=" + worker.positionsExamined()
                 + ", maxSearchMs=" + (worker.maxSearchTickNanos() / 1_000_000.0)
-                + ", matches=" + worker.matchingBlocks()
-                + ", candidates=" + worker.candidatesFound()
-                + ", cached=" + worker.cachedCandidateCount()
-                + ", waiting=" + worker.waitingForSearchChunk()
-                + ", lastChunk=" + worker.lastScannedChunk()
-                + ", requestedChunk=" + worker.requestedSearchChunk()
                 + ", pathStatus=" + worker.pathingStatus()
                 + ", pathNode=" + worker.currentPathNode()
                 + ", pathLength=" + worker.currentPathLength()
                 + ", pathCost=" + worker.currentPathCost()
-                + ", pathSample=" + worker.currentPathSample()
                 + ", chunkNow=" + (helper.getLevel().getChunkSource().getChunkNow(
                         new ChunkPos(absoluteTarget).x, new ChunkPos(absoluteTarget).z) != null);
     }

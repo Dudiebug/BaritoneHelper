@@ -17,6 +17,7 @@
 
 package dev.dudie.baritonehelper.internal.baritone.process;
 
+import dev.dudie.baritonehelper.entity.WorkerEntity;
 import dev.dudie.baritonehelper.internal.baritone.InternalBaritoneRuntime;
 import dev.dudie.baritonehelper.internal.baritone.Baritone;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.LivingEntityInventory;
@@ -28,7 +29,6 @@ import dev.dudie.baritonehelper.internal.baritone.api.pathing.goals.GoalTwoBlock
 import dev.dudie.baritonehelper.internal.baritone.api.process.IMineProcess;
 import dev.dudie.baritonehelper.internal.baritone.api.process.PathingCommand;
 import dev.dudie.baritonehelper.internal.baritone.api.process.PathingCommandType;
-import dev.dudie.baritonehelper.internal.baritone.api.utils.BetterBlockPos;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.BlockOptionalMeta;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.BlockOptionalMetaLookup;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.BlockUtils;
@@ -48,9 +48,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
@@ -70,6 +73,12 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
    private GoalRunAway branchPointRunaway;
    private int desiredQuantity;
    private int tickCount;
+   private final Object rescanLock = new Object();
+   private RescanRequest pendingRescan;
+   private boolean rescanInFlight;
+   private long rescanInFlightGeneration = -1L;
+   private Future<?> rescanFuture;
+   private long rescanGeneration;
 
    public MineProcess(Baritone baritone) {
       super(baritone);
@@ -116,8 +125,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
          int mineGoalUpdateInterval = this.baritone.settings().mineGoalUpdateInterval.get();
          List<BlockPos> curr = new ArrayList<>(this.knownOreLocations);
          if (mineGoalUpdateInterval != 0 && this.tickCount++ % mineGoalUpdateInterval == 0) {
-            CalculationContext context = new CalculationContext(this.baritone, true);
-            InternalBaritoneRuntime.getExecutor().execute(() -> this.rescan(curr, context));
+            this.requestRescan(curr);
          }
 
          if (this.baritone.settings().legitMine.get()) {
@@ -145,6 +153,10 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                   return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
                }
             }
+         }
+
+         if (!this.baritone.settings().legitMine.get() && this.knownOreLocations.isEmpty()) {
+            return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
          }
 
          PathingCommand command = this.updateGoal();
@@ -230,20 +242,144 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
       }
    }
 
-   private void rescan(List<BlockPos> already, CalculationContext context) {
-      if (this.filter != null) {
-         if (!this.baritone.settings().legitMine.get()) {
-            List<BlockPos> dropped = this.droppedItemsScan();
-            List<BlockPos> locs = searchWorld(context, this.filter, 64, already, this.blacklist, dropped);
-            locs.addAll(dropped);
-            if (locs.isEmpty()) {
-               this.logDirect("No locations for " + this.filter + " known, cancelling");
+   private void requestRescan(List<BlockPos> already) {
+      if (this.filter == null || this.baritone.settings().legitMine.get()) {
+         return;
+      }
 
-               this.cancel();
-            } else {
-               this.knownOreLocations = locs;
-            }
+      BlockPos center = this.ctx.feetPos().immutable();
+      List<BlockPos> safeAlready = new ArrayList<>(already);
+      List<BlockPos> safeDropped = new ArrayList<>(this.droppedItemsScan());
+      if (this.ctx.entity() instanceof WorkerEntity worker) {
+         safeAlready.removeIf(pos -> !worker.canModifyAt(pos));
+         safeDropped.removeIf(pos -> !worker.canModifyAt(pos));
+      }
+      RescanRequest request = new RescanRequest(
+            0L,
+            this.filter,
+            List.copyOf(safeAlready),
+            List.copyOf(this.blacklist),
+            List.copyOf(safeDropped),
+            center,
+            this.ctx.world().getServer());
+      boolean start;
+      synchronized (this.rescanLock) {
+         request = new RescanRequest(
+               this.rescanGeneration,
+               request.filter(),
+               request.already(),
+               request.blacklist(),
+               request.dropped(),
+               request.center(),
+               request.server());
+         this.pendingRescan = request;
+         start = !this.rescanInFlight;
+         if (start) {
+            this.pendingRescan = null;
+            this.rescanInFlight = true;
+            this.rescanInFlightGeneration = request.generation();
          }
+      }
+      if (start) {
+         this.startRescan(request);
+      }
+   }
+
+   private void startRescan(RescanRequest request) {
+      try {
+         CalculationContext context = new CalculationContext(this.baritone, true);
+         WorldScanner.ScanSnapshot snapshot = WorldScanner.INSTANCE.capture(this.ctx, request.filter(), 32);
+         if (request.server() == null) {
+            this.publishRescan(request, this.computeRescan(request, context, snapshot), null);
+            return;
+         }
+         FutureTask<Void> task = new FutureTask<>(() -> {
+            this.runRescan(request, context, snapshot);
+            return null;
+         });
+         synchronized (this.rescanLock) {
+            if (!this.rescanInFlight || this.rescanInFlightGeneration != request.generation()) {
+               task.cancel(false);
+               return;
+            }
+            this.rescanFuture = task;
+         }
+         InternalBaritoneRuntime.getScannerExecutor().execute(task);
+      } catch (Throwable error) {
+         this.publishRescan(request, null, error);
+      }
+   }
+
+   private void runRescan(RescanRequest request, CalculationContext context, WorldScanner.ScanSnapshot snapshot) {
+      try {
+         List<BlockPos> locations = this.computeRescan(request, context, snapshot);
+         MinecraftServer server = request.server();
+         server.execute(() -> this.publishRescan(request, locations, null));
+      } catch (Throwable error) {
+         MinecraftServer server = request.server();
+         server.execute(() -> this.publishRescan(request, null, error));
+      }
+   }
+
+   private List<BlockPos> computeRescan(RescanRequest request, CalculationContext context, WorldScanner.ScanSnapshot snapshot) {
+      List<BlockPos> dropped = new ArrayList<>(request.dropped());
+      List<BlockPos> locations = searchWorld(
+            context,
+            request.filter(),
+            64,
+            request.already(),
+            request.blacklist(),
+            dropped,
+            snapshot,
+            request.center());
+      locations.addAll(dropped);
+      return new ArrayList<>(locations);
+   }
+
+   private void publishRescan(RescanRequest request, List<BlockPos> locations, Throwable error) {
+      boolean current;
+      synchronized (this.rescanLock) {
+         current = request.generation() == this.rescanGeneration && request.filter() == this.filter;
+      }
+      if (current) {
+         if (error != null) {
+            InternalBaritoneRuntime.LOGGER.error("Unable to rescan for " + request.filter(), error);
+         } else if (locations == null || locations.isEmpty()) {
+            // An unlimited server worker is a long-lived process. Keep it
+            // paused and let the bounded periodic scanner discover blocks
+            // added or loaded later instead of cancel/restarting every tick.
+            this.knownOreLocations = new ArrayList<>();
+            // A path failure blacklist is provisional. If it excludes every
+            // known candidate, begin a fresh scan cycle so a transient chunk
+            // edge or world change cannot make the target unreachable forever.
+            this.blacklist.clear();
+         } else {
+            this.knownOreLocations = new ArrayList<>(locations);
+         }
+      }
+      this.finishRescan(request);
+   }
+
+   private void finishRescan(RescanRequest completed) {
+      RescanRequest next = null;
+      synchronized (this.rescanLock) {
+         if (!this.rescanInFlight || this.rescanInFlightGeneration != completed.generation()) {
+            return;
+         }
+         this.rescanInFlight = false;
+         this.rescanInFlightGeneration = -1L;
+         this.rescanFuture = null;
+         if (this.pendingRescan != null && this.filter != null && !this.baritone.settings().legitMine.get()) {
+            next = this.pendingRescan;
+            this.pendingRescan = null;
+            this.rescanInFlight = true;
+            this.rescanInFlightGeneration = next.generation();
+         } else {
+            this.pendingRescan = null;
+         }
+      }
+      if (next != null) {
+         this.startRescan(next);
       }
    }
 
@@ -296,30 +432,56 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
    public static List<BlockPos> searchWorld(
       CalculationContext ctx, BlockOptionalMetaLookup filter, int max, List<BlockPos> alreadyKnown, List<BlockPos> blacklist, List<BlockPos> dropped
    ) {
+      BlockPos center = ctx.safeForThreadedUse ? BlockPos.ZERO : new BlockPos(ctx.baritone.getEntityContext().feetPos());
+      return searchWorld(ctx, filter, max, alreadyKnown, blacklist, dropped, null, center);
+   }
+
+   private static List<BlockPos> searchWorld(
+      CalculationContext ctx,
+      BlockOptionalMetaLookup filter,
+      int max,
+      List<BlockPos> alreadyKnown,
+      List<BlockPos> blacklist,
+      List<BlockPos> dropped,
+      WorldScanner.ScanSnapshot snapshot,
+      BlockPos center
+   ) {
       List<BlockPos> locs = new ArrayList<>();
       List<Block> untracked = new ArrayList<>();
 
       for (BlockOptionalMeta bom : filter.blocks()) {
-         Block block = bom.getBlock();
-         if (CachedChunk.BLOCKS_TO_KEEP_TRACK_OF.contains(block)) {
-            BetterBlockPos pf = ctx.baritone.getEntityContext().feetPos();
+          Block block = bom.getBlock();
+          if (CachedChunk.BLOCKS_TO_KEEP_TRACK_OF.contains(block)) {
             locs.addAll(
                ctx.worldData
                   .getCachedWorld()
-                  .getLocationsOf(BlockUtils.blockToString(block), ctx.baritone.settings().maxCachedWorldScanCount.get(), pf.x, pf.z, 2)
+                  .getLocationsOf(
+                     BlockUtils.blockToString(block),
+                     ctx.baritone.settings().maxCachedWorldScanCount.get(),
+                     center.getX(),
+                     center.getZ(),
+                     2
+                  )
             );
+            if (!ctx.worldData.getCachedWorld().isCached(center.getX(), center.getZ())) {
+               untracked.add(block);
+            }
          } else {
             untracked.add(block);
          }
       }
 
-      locs = prune(ctx, locs, filter, max, blacklist, dropped);
+      locs = prune(ctx, locs, filter, max, blacklist, dropped, center);
       if (!untracked.isEmpty() || ctx.baritone.settings().extendCacheOnThreshold.get() && locs.size() < max) {
-         locs.addAll(WorldScanner.INSTANCE.scanChunkRadius(ctx.getBaritone().getEntityContext(), filter, max, 10, 32));
+         if (snapshot != null) {
+            locs.addAll(WorldScanner.INSTANCE.scanSnapshot(snapshot, filter, max, 10));
+         } else if (!ctx.safeForThreadedUse) {
+            locs.addAll(WorldScanner.INSTANCE.scanChunkRadius(ctx.getBaritone().getEntityContext(), filter, max, 10, 32));
+         }
       }
 
       locs.addAll(alreadyKnown);
-      return prune(ctx, locs, filter, max, blacklist, dropped);
+      return prune(ctx, locs, filter, max, blacklist, dropped, center);
    }
 
    private void addNearby() {
@@ -350,6 +512,19 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
    private static List<BlockPos> prune(
       CalculationContext ctx, List<BlockPos> locs2, BlockOptionalMetaLookup filter, int max, List<BlockPos> blacklist, List<BlockPos> dropped
    ) {
+      BlockPos center = ctx.safeForThreadedUse ? BlockPos.ZERO : new BlockPos(ctx.getBaritone().getEntityContext().feetPos());
+      return prune(ctx, locs2, filter, max, blacklist, dropped, center);
+   }
+
+   private static List<BlockPos> prune(
+      CalculationContext ctx,
+      List<BlockPos> locs2,
+      BlockOptionalMetaLookup filter,
+      int max,
+      List<BlockPos> blacklist,
+      List<BlockPos> dropped,
+      BlockPos center
+   ) {
       dropped.removeIf(drop -> {
          for (BlockPos pos : locs2) {
             if (pos.distSqr(drop) <= 9.0 && filter.has(ctx.get(pos.getX(), pos.getY(), pos.getZ())) && plausibleToBreak(ctx, pos)) {
@@ -370,7 +545,10 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
          .filter(pos -> ctx.getBaritone().settings().allowOnlyExposedOres.get() ? isNextToAir(ctx, pos) : true)
          .filter(pos -> pos.getY() >= ctx.getBaritone().settings().minYLevelWhileMining.get())
          .filter(pos -> !blacklist.contains(pos))
-         .sorted(Comparator.comparingDouble(ctx.getBaritone().getEntityContext().entity().blockPosition()::distSqr))
+         .filter(pos -> ctx.safeForThreadedUse
+            || !(ctx.getBaritone().getEntityContext().entity() instanceof WorkerEntity worker)
+            || worker.canModifyAt(pos))
+         .sorted(Comparator.comparingDouble(center::distSqr))
          .collect(Collectors.toList());
       return locs.size() > max ? locs.subList(0, max) : locs;
    }
@@ -405,6 +583,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
 
    @Override
    public void mine(int quantity, BlockOptionalMetaLookup filter) {
+      this.cancelRescan();
       this.filter = filter;
       if (filter != null && !this.baritone.settings().allowBreak.get()) {
          this.logDirect("Unable to mine when allowBreak is false!");
@@ -417,7 +596,30 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
          this.branchPointRunaway = null;
          this.anticipatedDrops = new HashMap<>();
          if (filter != null) {
-            this.rescan(new ArrayList<>(), new CalculationContext(this.baritone));
+            this.requestRescan(new ArrayList<>());
+         }
+      }
+   }
+
+   /** Cancel only this process's scan; generation fencing rejects late callbacks. */
+   public void shutdown() {
+      this.cancelRescan();
+   }
+
+   private void cancelRescan() {
+      Future<?> future;
+      synchronized (this.rescanLock) {
+         ++this.rescanGeneration;
+         this.pendingRescan = null;
+         this.rescanInFlight = false;
+         this.rescanInFlightGeneration = -1L;
+         future = this.rescanFuture;
+         this.rescanFuture = null;
+      }
+      if (future != null) {
+         future.cancel(true);
+         if (future instanceof Runnable runnable) {
+            InternalBaritoneRuntime.getScannerExecutor().remove(runnable);
          }
       }
    }
@@ -430,6 +632,17 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             Stream.of(blocks).map(block -> new BlockOptionalMeta(this.baritone.getEntityContext().world(), block)).toArray(BlockOptionalMeta[]::new)
          )
       );
+   }
+
+   private record RescanRequest(
+      long generation,
+      BlockOptionalMetaLookup filter,
+      List<BlockPos> already,
+      List<BlockPos> blacklist,
+      List<BlockPos> dropped,
+      BlockPos center,
+      MinecraftServer server
+   ) {
    }
 
    private static class GoalThreeBlocks extends GoalTwoBlocks {

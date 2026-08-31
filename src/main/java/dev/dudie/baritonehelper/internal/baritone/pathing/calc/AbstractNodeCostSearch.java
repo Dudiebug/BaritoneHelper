@@ -27,7 +27,10 @@ import dev.dudie.baritonehelper.internal.baritone.api.utils.PathCalculationResul
 import dev.dudie.baritonehelper.internal.baritone.pathing.movement.CalculationContext;
 import dev.dudie.baritonehelper.internal.baritone.utils.pathing.PathBase;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import java.util.Arrays;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class AbstractNodeCostSearch implements IPathFinder {
    protected final int startX;
@@ -36,11 +39,12 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
    protected final Goal goal;
    private final CalculationContext context;
    private final Long2ObjectOpenHashMap<PathNode> map;
-   protected PathNode startNode;
-   protected PathNode mostRecentConsidered;
+   protected volatile PathNode startNode;
+   protected volatile PathNode mostRecentConsidered;
    protected final PathNode[] bestSoFar;
    private volatile boolean isFinished;
-   protected boolean cancelRequested;
+   protected final AtomicBoolean cancelRequested = new AtomicBoolean();
+   private final AtomicReference<ProgressSnapshot> progress = new AtomicReference<>();
    protected static final double[] COEFFICIENTS = new double[]{1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0};
    protected static final double MIN_DIST_PATH = 5.0;
    protected static final double MIN_IMPROVEMENT = 0.01;
@@ -56,7 +60,7 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
    }
 
    public void cancel() {
-      this.cancelRequested = true;
+      this.cancelRequested.set(true);
    }
 
    @Override
@@ -64,12 +68,13 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
       if (this.isFinished) {
          throw new IllegalStateException("Path finder cannot be reused!");
       } else {
-         this.cancelRequested = false;
-
-         PathCalculationResult var8;
          try {
+            if (this.cancelRequested.get()) {
+               return new PathCalculationResult(PathCalculationResult.Type.CANCELLATION);
+            }
+
             IPath path = this.calculate0(primaryTimeout, failureTimeout).map(IPath::postProcess).orElse(null);
-            if (this.cancelRequested) {
+            if (this.cancelRequested.get()) {
                return new PathCalculationResult(PathCalculationResult.Type.CANCELLATION);
             }
 
@@ -93,20 +98,26 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
                this.context.baritone.logDebug("Static cutoff " + previousLength + " to " + var15.length());
             }
 
+            if (this.cancelRequested.get()) {
+               return new PathCalculationResult(PathCalculationResult.Type.CANCELLATION);
+            }
+
             if (!this.goal.isInGoal(var15.getDest())) {
                return new PathCalculationResult(PathCalculationResult.Type.SUCCESS_SEGMENT, var15);
             }
 
-            var8 = new PathCalculationResult(PathCalculationResult.Type.SUCCESS_TO_GOAL, var15);
+            return new PathCalculationResult(PathCalculationResult.Type.SUCCESS_TO_GOAL, var15);
          } catch (Exception var12) {
+            if (this.cancelRequested.get()) {
+               return new PathCalculationResult(PathCalculationResult.Type.CANCELLATION);
+            }
+
             this.context.baritone.logDirect("Pathing exception: " + var12);
             InternalBaritoneRuntime.LOGGER.error("Pathing exception: ", var12);
             return new PathCalculationResult(PathCalculationResult.Type.EXCEPTION);
          } finally {
             this.isFinished = true;
          }
-
-         return var8;
       }
    }
 
@@ -131,7 +142,13 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
 
    @Override
    public Optional<IPath> pathToMostRecentNodeConsidered() {
-      return Optional.ofNullable(this.mostRecentConsidered).map(node -> new Path(this.startNode, node, 0, this.goal, this.context));
+      ProgressSnapshot snapshot = this.progress.get();
+      if (snapshot == null || snapshot.startNode == null) {
+         return Optional.empty();
+      }
+
+      return Optional.ofNullable(snapshot.mostRecentConsidered)
+         .map(node -> new Path(snapshot.startNode, node, 0, this.goal, this.context));
    }
 
    @Override
@@ -140,14 +157,23 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
    }
 
    protected Optional<IPath> bestSoFar(boolean logInfo, int numNodes) {
-      if (this.startNode == null) {
+      ProgressSnapshot snapshot = this.progress.get();
+      if (snapshot == null) {
+         return Optional.empty();
+      } else {
+         return this.bestSoFar(snapshot, logInfo, numNodes);
+      }
+   }
+
+   private Optional<IPath> bestSoFar(ProgressSnapshot snapshot, boolean logInfo, int numNodes) {
+      if (snapshot.startNode == null) {
          return Optional.empty();
       } else {
          double bestDist = 0.0;
 
          for (int i = 0; i < COEFFICIENTS.length; i++) {
-            if (this.bestSoFar[i] != null) {
-               double dist = this.getDistFromStartSq(this.bestSoFar[i]);
+            if (snapshot.bestSoFar[i] != null) {
+               double dist = this.getDistFromStartSq(snapshot.bestSoFar[i]);
                if (dist > bestDist) {
                   bestDist = dist;
                }
@@ -164,7 +190,7 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
                      this.context.baritone.logDebug("A* cost coefficient " + COEFFICIENTS[i]);
                   }
 
-                  return Optional.of(new Path(this.startNode, this.bestSoFar[i], numNodes, this.goal, this.context));
+                  return Optional.of(new Path(snapshot.startNode, snapshot.bestSoFar[i], numNodes, this.goal, this.context));
                }
             }
          }
@@ -179,6 +205,23 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
          }
 
          return Optional.empty();
+      }
+   }
+
+   /** Publish a point-in-time view so tick-thread progress reads never walk a live array. */
+   protected final void publishProgress() {
+      this.progress.set(new ProgressSnapshot(this.startNode, this.mostRecentConsidered, this.bestSoFar));
+   }
+
+   private static final class ProgressSnapshot {
+      private final PathNode startNode;
+      private final PathNode mostRecentConsidered;
+      private final PathNode[] bestSoFar;
+
+      private ProgressSnapshot(PathNode startNode, PathNode mostRecentConsidered, PathNode[] bestSoFar) {
+         this.startNode = startNode;
+         this.mostRecentConsidered = mostRecentConsidered;
+         this.bestSoFar = Arrays.copyOf(bestSoFar, bestSoFar.length);
       }
    }
 

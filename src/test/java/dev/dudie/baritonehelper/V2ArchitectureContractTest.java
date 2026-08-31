@@ -57,22 +57,23 @@ class V2ArchitectureContractTest {
     }
 
     @Test
-    void longRangeSearchIsTicketedCachedAndIndependentOfCurrentEyeLos() throws IOException {
-        String planner = read("src/main/java/dev/dudie/baritonehelper/worker/WorkerPlanner.java");
+    void longRangeSearchUsesTheLoadedWindowCacheAndMineProcess() throws IOException {
         String controller = read("src/main/java/dev/dudie/baritonehelper/worker/WorkerController.java");
         String worker = read("src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java");
+        String scanner = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/cache/WorldScanner.java");
+        String mine = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/process/MineProcess.java");
+        String worldData = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/cache/WorldData.java");
         String blockState = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/utils/BlockStateInterface.java");
         String calculation = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/pathing/movement/CalculationContext.java");
         String pathing = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/behavior/PathingBehavior.java");
-        assertTrue(planner.contains("requestedChunk"));
-        assertTrue(planner.contains("primeSearchTickets"));
-        assertTrue(planner.contains("MAX_SEARCH_TICKETS = 4"));
-        assertTrue(planner.contains("MAX_CACHED_CANDIDATES = 32"));
-        assertTrue(planner.contains("reprioritize(BlockPos workerPosition)"));
-        assertTrue(planner.contains("work.getX() + 0.5"));
-        assertTrue(planner.contains("work.getY() + worker.getEyeHeight()"));
-        assertFalse(planner.contains("getEyePosition()"));
-        assertTrue(worker.contains("SEARCH_TICKETS.forceChunk"));
+        assertTrue(worker.contains("WORKER_CHUNK_RADIUS = 12"));
+        assertTrue(worker.contains("workerChunkWindowReady()"));
+        assertTrue(worker.contains("engine.getMineProcess().mine"));
+        assertTrue(controller.contains("worker.ensureMineProcessStarted()"));
+        assertTrue(scanner.contains("getChunkNow"));
+        assertTrue(scanner.contains("scanSnapshot"));
+        assertTrue(mine.contains("requestRescan"));
+        assertTrue(worldData.contains("new CachedWorld()"));
         assertTrue(worker.contains("workerController.resetTransientState()"));
         assertTrue(controller.contains("PathingStatus.NO_PATH"));
         assertTrue(controller.contains("worker.pathingStatus() == PathingStatus.CALCULATING"));
@@ -84,9 +85,9 @@ class V2ArchitectureContractTest {
     }
 
     @Test
-    void releaseMetadataIsV2AndIncludesSourceLicense() throws IOException {
+    void releaseMetadataHasSemanticVersionAndIncludesSourceLicense() throws IOException {
         String properties = read("gradle.properties");
-        assertTrue(properties.contains("mod_version=2.0.0"));
+        assertTrue(properties.matches("(?s).*(?m:^mod_version=\\d+\\.\\d+\\.\\d+$).*"));
         assertTrue(properties.contains("LGPL-3.0-or-later"));
         assertTrue(Files.exists(Path.of("LICENSES/LGPL-3.0.txt")));
         assertTrue(Files.exists(Path.of("THIRD_PARTY_NOTICES.md")));

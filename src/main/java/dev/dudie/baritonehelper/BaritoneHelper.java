@@ -4,8 +4,10 @@ import dev.dudie.baritonehelper.entity.WorkerEntity;
 import dev.dudie.baritonehelper.item.WorkerControllerItem;
 import dev.dudie.baritonehelper.item.WorkerItem;
 import dev.dudie.baritonehelper.menu.WorkerDashboardMenu;
+import java.util.UUID;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.inventory.MenuType;
@@ -95,6 +97,10 @@ public final class BaritoneHelper {
     public static final TicketController WORKER_TICKETS =
             new TicketController(
                     ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_worker"));
+    public static final TicketType<UUID> WORKER_VIEW_TICKET =
+            TicketType.create(MOD_ID + ":worker_view", UUID::compareTo);
+    public static final TicketType<UUID> WORKER_SIMULATION_TICKET =
+            TicketType.create(MOD_ID + ":worker_simulation", UUID::compareTo);
     public static final TicketController SEARCH_TICKETS =
             new TicketController(
                     ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_search"));

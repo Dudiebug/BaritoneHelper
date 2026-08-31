@@ -125,7 +125,13 @@ public class PathExecutor implements IPathExecutor {
             this.cancel();
             return false;
          } else {
-            BlockStateInterface bsi = new BlockStateInterface(this.ctx);
+            Baritone baritone = this.behavior.baritone;
+            CalculationContext calculationContext = this.behavior.secretInternalGetCalculationContext();
+            BlockStateInterface bsi = baritone.bsi;
+            if (bsi == null) {
+               this.clearKeys();
+               return true;
+            }
 
             for (int ix = this.pathPosition - 10; ix < this.pathPosition + 10; ix++) {
                if (ix >= 0 && ix < this.path.movements().size()) {
@@ -166,10 +172,9 @@ public class PathExecutor implements IPathExecutor {
                this.recalcBP = false;
             }
 
-            Baritone baritone = this.behavior.baritone;
             if (this.pathPosition < this.path.movements().size() - 1) {
                IMovement next = this.path.movements().get(this.pathPosition + 1);
-               if (!baritone.bsi.worldContainsLoadedChunk(next.getDest().x, next.getDest().z)) {
+               if (!bsi.worldContainsLoadedChunk(next.getDest().x, next.getDest().z)) {
                   this.logDebug("Pausing since destination is at edge of loaded chunks");
                   this.clearKeys();
                   return true;
@@ -182,7 +187,7 @@ public class PathExecutor implements IPathExecutor {
                this.currentMovementOriginalCostEstimate = movement.getCost();
 
                for (int ixx = 1; ixx < baritone.settings().costVerificationLookahead.get() && this.pathPosition + ixx < this.path.length() - 1; ixx++) {
-                  if (((Movement)this.path.movements().get(this.pathPosition + ixx)).calculateCost(this.behavior.secretInternalGetCalculationContext())
+                  if (((Movement)this.path.movements().get(this.pathPosition + ixx)).calculateCost(calculationContext)
                         >= 1000000.0
                      && canCancel) {
                      this.logDebug("Something has changed in the world and a future movement has become impossible. Cancelling.");
@@ -192,7 +197,7 @@ public class PathExecutor implements IPathExecutor {
                }
             }
 
-            double currentCost = movement.recalculateCost(this.behavior.secretInternalGetCalculationContext());
+            double currentCost = movement.recalculateCost(calculationContext);
             if (currentCost >= 1000000.0 && canCancel) {
                this.logDebug("Something has changed in the world and this movement has become impossible. Cancelling.");
                this.cancel();
@@ -219,7 +224,10 @@ public class PathExecutor implements IPathExecutor {
                   this.onTick();
                   return true;
                } else {
-                  this.ctx.entity().setSprinting(this.shouldSprintNextTick());
+                  this.sprintNextTick = this.shouldSprintNextTick(calculationContext);
+                  if (this.ctx.entity().isSprinting() != this.sprintNextTick) {
+                     this.ctx.entity().setSprinting(this.sprintNextTick);
+                  }
                   this.ticksOnCurrent++;
                   if (this.ticksOnCurrent > this.currentMovementOriginalCostEstimate + baritone.settings().movementTimeoutTicks.get().intValue()) {
                      this.logDebug(
@@ -244,7 +252,10 @@ public class PathExecutor implements IPathExecutor {
       double best = -1.0;
       BlockPos bestPos = null;
 
-      for (IMovement movement : path.movements()) {
+      int firstMovement = Math.max(0, this.pathPosition - 10);
+      int lastMovement = Math.min(path.movements().size(), this.pathPosition + 10);
+      for (int i = firstMovement; i < lastMovement; i++) {
+         IMovement movement = path.movements().get(i);
          for (BlockPos pos : ((Movement)movement).getValidPositions()) {
             double dist = VecUtils.entityDistanceToCenter(this.ctx.entity(), pos);
             if (dist < best || best == -1.0) {
@@ -316,10 +327,13 @@ public class PathExecutor implements IPathExecutor {
       }
    }
 
-   private boolean shouldSprintNextTick() {
+   private boolean shouldSprintNextTick(CalculationContext calculationContext) {
       boolean requested = this.behavior.baritone.getInputOverrideHandler().isInputForcedDown(Input.SPRINT);
-      this.behavior.baritone.getInputOverrideHandler().setInputForceState(Input.SPRINT, false);
-      if (!(new CalculationContext(this.behavior.baritone)).canSprint) {
+      if (requested) {
+         this.behavior.baritone.getInputOverrideHandler().setInputForceState(Input.SPRINT, false);
+      }
+
+      if (!calculationContext.canSprint) {
          return false;
       } else {
          IMovement current = this.path.movements().get(this.pathPosition);
@@ -545,6 +559,10 @@ public class PathExecutor implements IPathExecutor {
 
    private void clearKeys() {
       this.behavior.baritone.getInputOverrideHandler().clearAllKeys();
+      this.sprintNextTick = false;
+      if (this.ctx.entity().isSprinting()) {
+         this.ctx.entity().setSprinting(false);
+      }
    }
 
    private void cancel() {

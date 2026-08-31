@@ -25,8 +25,8 @@ import dev.dudie.baritonehelper.internal.baritone.api.process.PathingCommandType
 import dev.dudie.baritonehelper.internal.baritone.utils.BaritoneProcessHelper;
 
 public final class CustomGoalProcess extends BaritoneProcessHelper implements ICustomGoalProcess {
-   private Goal goal;
-   private CustomGoalProcess.State state;
+   private volatile Goal goal;
+   private volatile CustomGoalProcess.State state = CustomGoalProcess.State.NONE;
 
    public CustomGoalProcess(Baritone baritone) {
       super(baritone);
@@ -46,7 +46,10 @@ public final class CustomGoalProcess extends BaritoneProcessHelper implements IC
 
    @Override
    public void path() {
-      this.state = CustomGoalProcess.State.PATH_REQUESTED;
+      // PATH_REQUESTED is the single coalesced slot for repeated callers.
+      if (this.state != CustomGoalProcess.State.PATH_REQUESTED) {
+         this.state = CustomGoalProcess.State.PATH_REQUESTED;
+      }
    }
 
    @Override

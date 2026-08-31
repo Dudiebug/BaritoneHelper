@@ -5,6 +5,7 @@ public enum WorkerRuntimeState {
     UNCONFIGURED,
     READY,
     STARTING,
+    LOADING_CHUNKS,
     SEARCHING,
     PATHING,
     BREAKING,

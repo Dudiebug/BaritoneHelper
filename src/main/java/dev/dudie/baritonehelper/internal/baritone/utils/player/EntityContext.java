@@ -17,6 +17,7 @@
 
 package dev.dudie.baritonehelper.internal.baritone.utils.player;
 
+import dev.dudie.baritonehelper.internal.baritone.Baritone;
 import dev.dudie.baritonehelper.internal.baritone.api.BaritoneAPI;
 import dev.dudie.baritonehelper.internal.baritone.api.IBaritone;
 import dev.dudie.baritonehelper.internal.baritone.api.cache.IWorldData;
@@ -30,6 +31,7 @@ import dev.dudie.baritonehelper.internal.baritone.api.utils.IEntityContext;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.IInteractionController;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.RayTraceUtils;
 import dev.dudie.baritonehelper.internal.baritone.cache.WorldData;
+import dev.dudie.baritonehelper.internal.baritone.utils.BlockStateInterface;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -121,6 +123,13 @@ public class EntityContext implements IEntityContext {
       double x = this.entity().getX();
       double z = this.entity().getZ();
       BetterBlockPos feet = new BetterBlockPos(x, this.entity().getY() + 0.1251, z);
+      if (this.baritone instanceof Baritone baritone) {
+         BlockStateInterface bsi = baritone.bsi;
+         if (bsi != null) {
+            return bsi.get0(feet).getBlock() instanceof SlabBlock ? feet.up() : feet;
+         }
+      }
+
       ServerLevel world = this.world();
       if (world != null) {
          LevelChunk chunk = world.getChunkSource().getChunkNow((int)x >> 4, (int)z >> 4);

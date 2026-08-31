@@ -3,8 +3,10 @@ package dev.dudie.baritonehelper.internal.baritone;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 
@@ -18,11 +20,38 @@ public final class InternalBaritoneRuntime {
     public static final String MOD_NAME = "Baritone Helper";
     public static final Logger LOGGER = LoggerFactory.getLogger("BaritoneHelper/Engine");
     /** Small bounded pool: path calculations never run on the server tick thread. */
-    private static final ExecutorService PATH_EXECUTOR = Executors.newFixedThreadPool(2, runnable -> {
-        Thread thread = new Thread(runnable, "baritone-helper-pathing");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static final int PATH_WORKER_COUNT = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
+    /** Leave room for queued calculations without limiting the number of workers. */
+    private static final int PATH_QUEUE_CAPACITY = Math.max(PATH_WORKER_COUNT * 2, 32);
+    private static final ThreadPoolExecutor PATH_EXECUTOR = new ThreadPoolExecutor(
+        PATH_WORKER_COUNT,
+        PATH_WORKER_COUNT,
+        0L,
+        TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(PATH_QUEUE_CAPACITY, true),
+        runnable -> {
+            Thread thread = new Thread(runnable, "baritone-helper-pathing");
+            thread.setDaemon(true);
+            return thread;
+        },
+        new ThreadPoolExecutor.AbortPolicy()
+    );
+    /** Discovery cannot starve latency-sensitive A* work. */
+    private static final int SCAN_WORKER_COUNT = Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() - 1));
+    private static final int SCAN_QUEUE_CAPACITY = Math.max(SCAN_WORKER_COUNT * 2, 32);
+    private static final ThreadPoolExecutor SCAN_EXECUTOR = new ThreadPoolExecutor(
+        SCAN_WORKER_COUNT,
+        SCAN_WORKER_COUNT,
+        0L,
+        TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(SCAN_QUEUE_CAPACITY, true),
+        runnable -> {
+            Thread thread = new Thread(runnable, "baritone-helper-scanner");
+            thread.setDaemon(true);
+            return thread;
+        },
+        new ThreadPoolExecutor.AbortPolicy()
+    );
     public static final Set<Item> WATER_BUCKETS = Set.of(Items.WATER_BUCKET);
     public static final Set<Item> EMPTY_BUCKETS = Set.of(Items.BUCKET);
 
@@ -33,7 +62,12 @@ public final class InternalBaritoneRuntime {
         return PATH_EXECUTOR;
     }
 
+    public static ThreadPoolExecutor getScannerExecutor() {
+        return SCAN_EXECUTOR;
+    }
+
     public static void shutdown() {
         PATH_EXECUTOR.shutdownNow();
+        SCAN_EXECUTOR.shutdownNow();
     }
 }

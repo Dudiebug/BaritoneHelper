@@ -17,7 +17,6 @@
 
 package dev.dudie.baritonehelper.internal.baritone.api.utils;
 
-import dev.dudie.baritonehelper.internal.baritone.api.utils.accessor.IItemStack;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
 import java.util.ArrayList;
@@ -26,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
@@ -85,7 +85,7 @@ public final class BlockOptionalMeta {
    private static IntSet getStackHashes(ServerLevel world, Set<BlockState> blockstates) {
       return blockstates.stream()
          .flatMap(state -> drops(world, state.getBlock()).stream().map(item -> new ItemStack(item, 1)))
-         .map(stack -> ((IItemStack)(Object)stack).getBaritoneHash())
+         .map(BlockOptionalMeta::stackHash)
          .collect(Collectors.toCollection(IntOpenHashSet::new));
    }
 
@@ -103,9 +103,14 @@ public final class BlockOptionalMeta {
    }
 
    public boolean matches(ItemStack stack) {
-      int hash = ((IItemStack)(Object)stack).getBaritoneHash();
-      hash -= stack.getDamageValue();
-      return this.stackHashes.contains(hash);
+      return this.stackHashes.contains(stackHash(stack));
+   }
+
+   private static int stackHash(ItemStack stack) {
+      // The client port injects an ItemStack accessor to cache this value.
+      // A dedicated server has no mixin, and mining only needs drop-item
+      // identity; durability and count must not affect target matching.
+      return stack.getItem().hashCode();
    }
 
    @Override
@@ -139,7 +144,7 @@ public final class BlockOptionalMeta {
                               .create(LootContextParamSets.BLOCK)
                         )
                         .withOptionalRandomSeed(world.getSeed())
-                        .create(null),
+                        .create(Optional.empty()),
                      stack -> items.add(stack.getItem())
                   );
                return items;

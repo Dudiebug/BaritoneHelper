@@ -63,7 +63,8 @@ public final class WorkerControllerRegressionGameTests {
         helper.assertValueEqual(worker.job(), WorkerJob.READY, "stopped state");
         helper.assertValueEqual(worker.targetBlockId().orElseThrow(), iron, "retained target");
         helper.assertValueEqual(worker.storagePosition().orElseThrow(), storage, "retained storage");
-        helper.assertValueEqual(worker.workerTicketCount(), 0, "released tickets");
+        helper.assertValueEqual(worker.workerTicketCount(), WorkerEntity.MAX_WORKER_TICKETS,
+                "stopped worker retains loaded view");
         helper.assertTrue(worker.getNavigation().isDone(), "stopped navigation");
         helper.assertValueEqual(
                 worker.stopJob(), WorkerActionResult.ALREADY_STOPPED, "duplicate stop result");
@@ -98,7 +99,8 @@ public final class WorkerControllerRegressionGameTests {
                 worker.clearTarget(), WorkerActionResult.TARGET_CLEARED, "clear result");
         helper.assertTrue(worker.targetBlockId().isEmpty(), "target must be empty");
         helper.assertValueEqual(worker.job(), WorkerJob.IDLE, "cleared state");
-        helper.assertValueEqual(worker.workerTicketCount(), 0, "cleared tickets");
+        helper.assertValueEqual(worker.workerTicketCount(), WorkerEntity.MAX_WORKER_TICKETS,
+                "cleared worker retains loaded view");
         helper.succeed();
     }
 

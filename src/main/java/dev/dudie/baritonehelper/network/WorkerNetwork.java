@@ -6,7 +6,9 @@ import dev.dudie.baritonehelper.worker.WorkerActionResult;
 import dev.dudie.baritonehelper.worker.WorkerMessages;
 import dev.dudie.baritonehelper.worker.NoWorkZone;
 import dev.dudie.baritonehelper.worker.NoWorkZoneMode;
+import java.util.Map;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -25,6 +27,11 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 @EventBusSubscriber(modid = BaritoneHelper.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class WorkerNetwork {
     private static final String PROTOCOL = "3";
+    private static final String INVENTORY_WRONG_DIMENSION = "inventory_wrong_dimension";
+    private static final String INVENTORY_OPEN_FAILED = "inventory_open_failed";
+    private static final Map<WorkerEntity, SentSnapshot> LAST_SENT_SNAPSHOTS = new WeakHashMap<>();
+
+    private record SentSnapshot(UUID ownerId, WorkerDashboardStateS2C.Snapshot snapshot) {}
 
     private WorkerNetwork() {}
 
@@ -50,18 +57,36 @@ public final class WorkerNetwork {
     }
 
     public static void openDashboard(ServerPlayer player, WorkerEntity worker) {
+        if (player == null || worker == null || !worker.isAlive()
+                || !worker.isOwnedByPlayer(player) || player.level() != worker.level()) return;
+        WorkerDashboardStateS2C.Snapshot snapshot = WorkerDashboardStateS2C.Snapshot.from(worker);
+        rememberSnapshot(worker, player.getUUID(), snapshot);
         PacketDistributor.sendToPlayer(
                 player,
-                new OpenWorkerDashboardS2C(WorkerDashboardStateS2C.Snapshot.from(worker)));
+                new OpenWorkerDashboardS2C(snapshot));
     }
 
     public static void sendStateToOwner(WorkerEntity worker) {
         if (!(worker.level() instanceof ServerLevel level) || worker.getOwnerUUID() == null) return;
         ServerPlayer owner = level.getServer().getPlayerList().getPlayer(worker.getOwnerUUID());
         if (owner != null && owner.level() == level) {
+            WorkerDashboardStateS2C.Snapshot snapshot = WorkerDashboardStateS2C.Snapshot.from(worker);
+            if (!rememberSnapshot(worker, owner.getUUID(), snapshot)) return;
             PacketDistributor.sendToPlayer(
                     owner,
-                    new WorkerDashboardStateS2C(WorkerDashboardStateS2C.Snapshot.from(worker)));
+                    new WorkerDashboardStateS2C(snapshot));
+        }
+    }
+
+    private static boolean rememberSnapshot(
+            WorkerEntity worker, UUID ownerId, WorkerDashboardStateS2C.Snapshot snapshot) {
+        synchronized (LAST_SENT_SNAPSHOTS) {
+            SentSnapshot previous = LAST_SENT_SNAPSHOTS.get(worker);
+            if (previous != null
+                    && ownerId.equals(previous.ownerId())
+                    && snapshot.equals(previous.snapshot())) return false;
+            LAST_SENT_SNAPSHOTS.put(worker, new SentSnapshot(ownerId, snapshot));
+            return true;
         }
     }
 
@@ -99,20 +124,34 @@ public final class WorkerNetwork {
     }
 
     private static void handleActionServer(WorkerDashboardActionC2S payload, IPayloadContext context) {
+        context.enqueueWork(() -> handleActionServerOnServerThread(payload, context));
+    }
+
+    private static void handleActionServerOnServerThread(
+            WorkerDashboardActionC2S payload, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player)
                 || !(player.level() instanceof ServerLevel level)) return;
         WorkerEntity worker = findOwnedWorker(player, payload.workerEntityId());
         if (worker == null) {
-            PacketDistributor.sendToPlayer(player, new WorkerActionAcknowledgementS2C(
-                    payload.requestId(), false, "worker_not_found", "message.baritonehelper.no_worker", 0));
+            boolean wrongDimension = payload.action() == WorkerDashboardActionC2S.Action.OPEN_INVENTORY
+                    && ownedWorkerInOtherDimension(player, payload.workerEntityId());
+            String errorCode = wrongDimension ? INVENTORY_WRONG_DIMENSION : "worker_not_found";
+            sendAcknowledgement(player, payload, false, errorCode,
+                    wrongDimension
+                            ? "message.baritonehelper.other_dimension"
+                            : "message.baritonehelper.no_worker",
+                    0);
             return;
         }
         if (worker.configurationRevision() != payload.expectedRevision()) {
             WorkerMessages.send(player, ChatFormatting.YELLOW, "message.baritonehelper.dashboard_stale");
-            PacketDistributor.sendToPlayer(player, new WorkerActionAcknowledgementS2C(
-                    payload.requestId(), false, "stale_revision", "message.baritonehelper.dashboard_stale",
-                    worker.configurationRevision()));
+            sendAcknowledgement(player, payload, false, "stale_revision",
+                    "message.baritonehelper.dashboard_stale", worker.configurationRevision());
             sendStateToOwner(worker);
+            return;
+        }
+        if (payload.action() == WorkerDashboardActionC2S.Action.OPEN_INVENTORY) {
+            handleInventoryRequest(player, worker, payload);
             return;
         }
         WorkerActionResult result = applyAction(player, worker, payload);
@@ -124,19 +163,66 @@ public final class WorkerNetwork {
         };
         String errorCode = success ? "ok" : result.name().toLowerCase(java.util.Locale.ROOT);
         String translationKey = success ? "message.baritonehelper.action_applied" : errorTranslation(result);
-        PacketDistributor.sendToPlayer(player, new WorkerActionAcknowledgementS2C(
-                payload.requestId(), success, errorCode, translationKey, worker.configurationRevision()));
+        sendAcknowledgement(player, payload, success, errorCode, translationKey, worker.configurationRevision());
         sendStateToOwner(worker);
+    }
+
+    private static void handleInventoryRequest(
+            ServerPlayer player, WorkerEntity worker, WorkerDashboardActionC2S payload) {
+        if (player.level() != worker.level()) {
+            sendAcknowledgement(player, payload, false, INVENTORY_WRONG_DIMENSION,
+                    "message.baritonehelper.other_dimension", worker.configurationRevision());
+            return;
+        }
+        if (!worker.canOpenInventory(player)) {
+            sendAcknowledgement(player, payload, false, INVENTORY_OPEN_FAILED,
+                    "message.baritonehelper.command_failed", worker.configurationRevision());
+            return;
+        }
+        try {
+            if (player.openMenu(worker).isEmpty()) {
+                sendAcknowledgement(player, payload, false, INVENTORY_OPEN_FAILED,
+                        "message.baritonehelper.command_failed", worker.configurationRevision());
+                return;
+            }
+        } catch (RuntimeException ignored) {
+            sendAcknowledgement(player, payload, false, INVENTORY_OPEN_FAILED,
+                    "message.baritonehelper.command_failed", worker.configurationRevision());
+            return;
+        }
+        sendAcknowledgement(player, payload, true, "ok",
+                "message.baritonehelper.action_applied", worker.configurationRevision());
+    }
+
+    private static void sendAcknowledgement(
+            ServerPlayer player,
+            WorkerDashboardActionC2S payload,
+            boolean success,
+            String errorCode,
+            String translationKey,
+            int revision) {
+        PacketDistributor.sendToPlayer(player, new WorkerActionAcknowledgementS2C(
+                payload.requestId(), success, errorCode, translationKey, revision));
     }
 
     private static WorkerEntity findOwnedWorker(ServerPlayer player, int entityId) {
         if (!(player.level() instanceof ServerLevel level)) return null;
         var entity = level.getEntity(entityId);
         return entity instanceof WorkerEntity worker
-                && worker.isAlive()
-                && worker.isOwnedByPlayer(player)
+                && worker.canOpenInventory(player)
                 ? worker
                 : null;
+    }
+
+    private static boolean ownedWorkerInOtherDimension(ServerPlayer player, int entityId) {
+        for (ServerLevel level : player.getServer().getAllLevels()) {
+            if (level == player.level()) continue;
+            var entity = level.getEntity(entityId);
+            if (entity instanceof WorkerEntity worker
+                    && worker.isAlive()
+                    && worker.isOwnedByPlayer(player)) return true;
+        }
+        return false;
     }
 
     private static WorkerActionResult applyAction(
@@ -160,11 +246,7 @@ public final class WorkerNetwork {
                 worker.clearStorage();
                 yield WorkerActionResult.TARGET_CLEARED;
             }
-            case OPEN_INVENTORY -> {
-                player.closeContainer();
-                player.openMenu(worker);
-                yield WorkerActionResult.ALREADY_STOPPED;
-            }
+            case OPEN_INVENTORY -> WorkerActionResult.INVALID_CONFIGURATION;
             case RESET_PROGRESS -> {
                 worker.resetProgress();
                 yield WorkerActionResult.ALREADY_STOPPED;

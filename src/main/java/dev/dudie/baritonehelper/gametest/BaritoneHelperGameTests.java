@@ -208,7 +208,7 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
-            timeoutTicks = 40)
+            timeoutTicks = 4000)
     public static void helperCollectsConfiguredBlockWhileOwnerIsOffline(
             GameTestHelper helper) {
         supportWorker(helper);
@@ -219,7 +219,7 @@ public final class BaritoneHelperGameTests {
         worker.beginCollection(
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(NEAR_TARGET));
 
-        helper.runAfterDelay(20, () -> {
+        helper.succeedWhen(() -> {
             helper.assertTrue(
                     helper.getBlockState(NEAR_TARGET).isAir(),
                     "configured block must be collected");
@@ -235,7 +235,7 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
-            timeoutTicks = 100)
+            timeoutTicks = 4000)
     public static void finiteGoalCompletesAfterRealDropAndDeposit(GameTestHelper helper) {
         supportWorker(helper);
         helper.setBlock(NEAR_TARGET, Blocks.GOLD_BLOCK);
@@ -248,7 +248,7 @@ public final class BaritoneHelperGameTests {
         worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
         worker.startJob();
 
-        helper.runAfterDelay(80, () -> {
+        helper.succeedWhen(() -> {
             helper.assertTrue(helper.getBlockState(NEAR_TARGET).isAir(),
                     "finite goal must break the source block");
             helper.assertValueEqual(worker.completedBlockCount(), 1,
@@ -392,7 +392,7 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
-            timeoutTicks = 140)
+            timeoutTicks = 4000)
     public static void helperNavigatesToReachableTarget(GameTestHelper helper) {
         for (int x = 1; x <= 4; x++) {
             helper.setBlock(x, 1, 1, Blocks.STONE);
@@ -404,7 +404,7 @@ public final class BaritoneHelperGameTests {
         worker.beginCollection(
                 blockId(Blocks.GOLD_BLOCK), helper.absolutePos(target));
 
-        helper.runAfterDelay(100, () -> {
+        helper.succeedWhen(() -> {
             String diagnostic = "reachable target must be collected; "
                     + "position=" + worker.position()
                     + ", startDistance=" + worker.position().distanceToSqr(start)

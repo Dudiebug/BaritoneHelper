@@ -21,20 +21,18 @@ import dev.dudie.baritonehelper.internal.baritone.api.cache.ICachedWorld;
 import dev.dudie.baritonehelper.internal.baritone.api.cache.IContainerMemory;
 import dev.dudie.baritonehelper.internal.baritone.api.cache.IWaypointCollection;
 import dev.dudie.baritonehelper.internal.baritone.api.cache.IWorldData;
-import java.util.ArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import java.util.HashSet;
 
 public class WorldData implements IWorldData {
    private final WaypointCollection waypoints = new WaypointCollection();
    private final ContainerMemory containerMemory = new ContainerMemory();
+   private final CachedWorld cachedWorld = new CachedWorld();
    public final ResourceKey<Level> dimension;
-   private final HashSet<Long> localChunkCache = new HashSet<>();
 
    public WorldData(ResourceKey<Level> dimension) {
       this.dimension = dimension;
@@ -52,21 +50,7 @@ public class WorldData implements IWorldData {
 
    @Override
    public ICachedWorld getCachedWorld() {
-      return new ICachedWorld() {
-         @Override
-         public boolean isCached(int blockX, int blockZ) {
-            int chunkX = blockX >> 4;
-            int chunkZ = blockZ >> 4;
-            long key = ChunkPos.asLong(chunkX, chunkZ);
-            return localChunkCache.contains(key);
-         }
-
-         @Override
-         public ArrayList<BlockPos> getLocationsOf(String block, int maximum, int centerX, int centerZ,
-               int maxRegionDistanceSq) {
-            return new ArrayList<>();
-         }
-      };
+      return this.cachedWorld;
    }
 
    @Override
@@ -81,13 +65,17 @@ public class WorldData implements IWorldData {
 
    @Override
    public void addBlockPosToCache(int blockX, int blockZ) {
-      int chunkX = blockX >> 4;
-      int chunkZ = blockZ >> 4;
-      addChunkPosToCache(chunkX, chunkZ);
+      this.addChunkPosToCache(blockX >> 4, blockZ >> 4);
    }
 
    public void addChunkPosToCache(int chunkX, int chunkZ) {
-      long key = ChunkPos.asLong(chunkX, chunkZ);
-      this.localChunkCache.add(key);
+      this.cachedWorld.markChunkCached(ChunkPos.asLong(chunkX, chunkZ));
+   }
+
+   /** Records a block found by a palette scan for the next tracked lookup. */
+   public void addBlockPosToCache(String block, BlockPos position) {
+      if (block != null) {
+         this.cachedWorld.addLocation(block, position);
+      }
    }
 }

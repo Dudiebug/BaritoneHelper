@@ -31,15 +31,13 @@ class ControllerUxContractTest {
     }
 
     @Test
-    void navigationSeparatesResourceFromReachableWorkPosition() throws IOException {
-        String planner = Files.readString(Path.of(
-                "src/main/java/dev/dudie/baritonehelper/worker/WorkerPlanner.java"));
+    void collectionDelegatesResourceDiscoveryAndReachabilityToMineProcess() throws IOException {
         String controller = Files.readString(Path.of(
                 "src/main/java/dev/dudie/baritonehelper/worker/WorkerController.java"));
-        assertTrue(planner.contains("record CollectionPlan(BlockPos target, BlockPos workPosition)"));
-        assertTrue(planner.contains("canStandAt"));
-        assertTrue(controller.contains("currentWorkPosition"));
-        assertTrue(controller.contains("navigateTo(currentWorkPosition)"));
+        assertTrue(controller.contains("worker.ensureMineProcessStarted()"));
+        assertTrue(controller.contains("worker.mineProcessActive()"));
+        assertFalse(controller.contains("WorkerPlanner.CollectionPlan"));
+        assertTrue(controller.contains("navigateToStorage"));
     }
 
     @Test

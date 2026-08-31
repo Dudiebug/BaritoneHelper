@@ -5,6 +5,8 @@ import dev.dudie.baritonehelper.worker.NoWorkZone;
 import dev.dudie.baritonehelper.worker.WorkerPathingSettings;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
@@ -13,6 +15,8 @@ import net.minecraft.resources.ResourceLocation;
 
 /** Server-authoritative dashboard snapshot.  It contains no client-derived world state. */
 public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacketPayload {
+    private static final Map<WorkerEntity, ConfigurationCache> CONFIGURATION_CACHE = new WeakHashMap<>();
+
     public static final Type<WorkerDashboardStateS2C> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath("baritonehelper", "worker_dashboard_state"));
     public static final StreamCodec<RegistryFriendlyByteBuf, WorkerDashboardStateS2C> STREAM_CODEC =
@@ -46,6 +50,50 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
                     zone.verticalRadius(),
                     zone.mode().ordinal(),
                     zone.enabled());
+        }
+    }
+
+    private record ConfigurationCache(
+            int revision,
+            boolean allowBreakingObstructions,
+            boolean allowBlockPlacement,
+            boolean allowBridging,
+            boolean allowPillaring,
+            boolean allowParkour,
+            boolean allowWaterRoutes,
+            boolean preferSaferRoutes,
+            boolean avoidDestructiveRouting,
+            List<String> exclusions,
+            List<ZoneSnapshot> noWorkZones) {}
+
+    private static ConfigurationCache configurationCache(WorkerEntity worker, int revision) {
+        synchronized (CONFIGURATION_CACHE) {
+            ConfigurationCache cached = CONFIGURATION_CACHE.get(worker);
+            int cachedRevision = cached == null ? -1 : cached.revision();
+            if (cachedRevision == revision) return cached;
+
+            WorkerPathingSettings settings = worker.configuration().pathing();
+            ConfigurationCache next = new ConfigurationCache(
+                    revision,
+                    settings.allowBreakingObstructions,
+                    settings.allowBlockPlacement,
+                    settings.allowBridging,
+                    settings.allowPillaring,
+                    settings.allowParkour,
+                    settings.allowWaterRoutes,
+                    settings.preferSaferRoutes,
+                    settings.avoidDestructiveRouting,
+                    worker.exclusions().stream()
+                            .map(ResourceLocation::toString)
+                            .sorted()
+                            .limit(128)
+                            .toList(),
+                    worker.noWorkZones().stream()
+                            .limit(128)
+                            .map(ZoneSnapshot::from)
+                            .toList());
+            CONFIGURATION_CACHE.put(worker, next);
+            return next;
         }
     }
 
@@ -113,19 +161,10 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
             List<String> activityHistory,
             String resumeNote) {
         public static Snapshot from(WorkerEntity worker) {
-            WorkerPathingSettings settings = worker.configuration().pathing();
-            List<String> exclusions = worker.exclusions().stream()
-                    .map(ResourceLocation::toString)
-                    .sorted()
-                    .limit(128)
-                    .toList();
-            List<ZoneSnapshot> zones = worker.noWorkZones().stream()
-                    .limit(128)
-                    .map(ZoneSnapshot::from)
-                    .toList();
+            ConfigurationCache configuration = configurationCache(worker, worker.configurationRevision());
             return new Snapshot(
                     worker.getId(),
-                    worker.configurationRevision(),
+                    configuration.revision(),
                     worker.level().dimension().location().toString(),
                     worker.targetBlockId().map(ResourceLocation::toString).orElse(""),
                     worker.job().ordinal(),
@@ -173,16 +212,16 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
                     worker.currentPathNode(),
                     worker.currentPathLength(),
                     worker.currentPathCost(),
-                    settings.allowBreakingObstructions,
-                    settings.allowBlockPlacement,
-                    settings.allowBridging,
-                    settings.allowPillaring,
-                    settings.allowParkour,
-                    settings.allowWaterRoutes,
-                    settings.preferSaferRoutes,
-                    settings.avoidDestructiveRouting,
-                    exclusions,
-                    zones,
+                    configuration.allowBreakingObstructions(),
+                    configuration.allowBlockPlacement(),
+                    configuration.allowBridging(),
+                    configuration.allowPillaring(),
+                    configuration.allowParkour(),
+                    configuration.allowWaterRoutes(),
+                    configuration.preferSaferRoutes(),
+                    configuration.avoidDestructiveRouting(),
+                    configuration.exclusions(),
+                    configuration.noWorkZones(),
                     worker.activityHistory(),
                     worker.resumeNote());
         }

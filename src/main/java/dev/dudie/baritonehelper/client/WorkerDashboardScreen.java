@@ -103,26 +103,31 @@ public final class WorkerDashboardScreen extends Screen {
     }
 
     public void setSnapshot(WorkerDashboardStateS2C.Snapshot snapshot) {
-        if (snapshot.workerEntityId() != workerEntityId()) return;
+        if (snapshot.workerEntityId() != workerEntityId()
+                || snapshot.configurationRevision() < this.snapshot.configurationRevision()
+                || snapshot.equals(this.snapshot)) return;
+        boolean configurationChanged = snapshot.configurationRevision() != this.snapshot.configurationRevision();
         this.snapshot = snapshot;
-        if (amountBox != null && !amountBox.isFocused()) {
-            amountBox.setValue(Integer.toString(snapshot.requestedCount()));
+        if (configurationChanged) {
+            if (amountBox != null && !amountBox.isFocused()) {
+                amountBox.setValue(Integer.toString(snapshot.requestedCount()));
+            }
+            if (areaXBox != null && !areaXBox.isFocused()) areaXBox.setValue(Integer.toString(snapshot.workAreaCenter().getX()));
+            if (areaYBox != null && !areaYBox.isFocused()) areaYBox.setValue(Integer.toString(snapshot.workAreaCenter().getY()));
+            if (areaZBox != null && !areaZBox.isFocused()) areaZBox.setValue(Integer.toString(snapshot.workAreaCenter().getZ()));
+            if (areaHorizontalBox != null && !areaHorizontalBox.isFocused()) areaHorizontalBox.setValue(Integer.toString(snapshot.horizontalRadius()));
+            if (areaVerticalBox != null && !areaVerticalBox.isFocused()) areaVerticalBox.setValue(Integer.toString(snapshot.verticalRadius()));
+            if (!selectedZoneId.isBlank()
+                    && snapshot.noWorkZones().stream().noneMatch(zone -> zone.id().equals(selectedZoneId))) {
+                selectedZoneId = "";
+            }
+            if (zoneNameBox != null && !zoneNameBox.isFocused()
+                    && !zoneXBox.isFocused() && !zoneYBox.isFocused() && !zoneZBox.isFocused()
+                    && !zoneHorizontalBox.isFocused() && !zoneVerticalBox.isFocused()) {
+                loadSelectedZone();
+            }
         }
-        if (areaXBox != null && !areaXBox.isFocused()) areaXBox.setValue(Integer.toString(snapshot.workAreaCenter().getX()));
-        if (areaYBox != null && !areaYBox.isFocused()) areaYBox.setValue(Integer.toString(snapshot.workAreaCenter().getY()));
-        if (areaZBox != null && !areaZBox.isFocused()) areaZBox.setValue(Integer.toString(snapshot.workAreaCenter().getZ()));
-        if (areaHorizontalBox != null && !areaHorizontalBox.isFocused()) areaHorizontalBox.setValue(Integer.toString(snapshot.horizontalRadius()));
-        if (areaVerticalBox != null && !areaVerticalBox.isFocused()) areaVerticalBox.setValue(Integer.toString(snapshot.verticalRadius()));
-        if (!selectedZoneId.isBlank()
-                && snapshot.noWorkZones().stream().noneMatch(zone -> zone.id().equals(selectedZoneId))) {
-            selectedZoneId = "";
-        }
-        if (zoneNameBox != null && !zoneNameBox.isFocused()
-                && !zoneXBox.isFocused() && !zoneYBox.isFocused() && !zoneZBox.isFocused()
-                && !zoneHorizontalBox.isFocused() && !zoneVerticalBox.isFocused()) {
-            loadSelectedZone();
-        }
-        updateButtons();
+        updateButtons(configurationChanged);
     }
 
     public void setAcknowledgement(WorkerActionAcknowledgementS2C acknowledgement) {
@@ -477,6 +482,10 @@ public final class WorkerDashboardScreen extends Screen {
     }
 
     private void updateButtons() {
+        updateButtons(true);
+    }
+
+    private void updateButtons(boolean configurationChanged) {
         if (startButton == null) return;
         WorkerJob job = enumValue(WorkerJob.values(), snapshot.job(), WorkerJob.IDLE);
         boolean running = job.activelyWorks();
@@ -491,6 +500,7 @@ public final class WorkerDashboardScreen extends Screen {
         selectZonePointButton.active = !selectedZoneId.isBlank();
         toggleZoneButton.active = !selectedZoneId.isBlank();
         deleteZoneButton.active = !selectedZoneId.isBlank();
+        if (!configurationChanged) return;
         zoneModeButton.setMessage(zoneModeLabel());
         zoneEnabledButton.setMessage(zoneEnabledLabel());
         amountModeButton.setMessage(modeLabel());

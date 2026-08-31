@@ -37,10 +37,12 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.effect.MobEffectUtil;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BucketItem;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
@@ -91,6 +93,27 @@ public class LivingEntityInteractionManager {
    public LivingEntityInteractionManager(LivingEntity livingEntity) {
       this.livingEntity = livingEntity;
       this.world = livingEntity.level();
+   }
+
+   private static @Nullable Player asPlayer(LivingEntity entity) {
+      return entity instanceof Player player ? player : null;
+   }
+
+   private static ItemStack getStackInHand(LivingEntity entity, InteractionHand hand) {
+      if (entity instanceof IInventoryProvider provider) {
+         return provider.getLivingInventory().getStackInHand(hand);
+      }
+      return entity.getItemInHand(hand);
+   }
+
+   private static void setStackInHand(LivingEntity entity, InteractionHand hand, ItemStack stack) {
+      if (entity instanceof IInventoryProvider provider) {
+         LivingEntityInventory inventory = provider.getLivingInventory();
+         inventory.setStackInHand(hand, stack);
+         entity.setItemInHand(hand, inventory.getStackInHand(hand));
+      } else {
+         entity.setItemInHand(hand, stack);
+      }
    }
 
    public GameType getGameMode() {
@@ -228,7 +251,7 @@ public class LivingEntityInteractionManager {
       if (f == -1.0F) {
          return 0.0F;
       } else {
-         int i = this.canHarvest(state, player.getItemInHand(InteractionHand.MAIN_HAND)) ? 30 : 100;
+         int i = this.canHarvest(state, getStackInHand(player, InteractionHand.MAIN_HAND)) ? 30 : 100;
          return this.getBlockBreakingSpeed(player, state) / f / i;
       }
    }
@@ -238,9 +261,9 @@ public class LivingEntityInteractionManager {
    }
 
    public float getBlockBreakingSpeed(LivingEntity entity, BlockState block) {
-      float f = this.livingEntity.getItemInHand(InteractionHand.MAIN_HAND).getDestroySpeed(block);
+      float f = getStackInHand(entity, InteractionHand.MAIN_HAND).getDestroySpeed(block);
       if (f > 1.0F) {
-         ItemStack itemStack = this.livingEntity.getItemInHand(InteractionHand.MAIN_HAND);
+         ItemStack itemStack = getStackInHand(entity, InteractionHand.MAIN_HAND);
          int i = InternalEnchantmentUtils.getEnchantmentLevel(itemStack, Enchantments.EFFICIENCY);
          if (i > 0 && !itemStack.isEmpty()) {
             f += i * i + 1;
@@ -293,89 +316,99 @@ public class LivingEntityInteractionManager {
          if (!EventHooks.onEntityDestroyBlock(this.livingEntity, pos, blockState)) {
             return false;
          }
-         this.world.gameEvent(GameEvent.BLOCK_DESTROY, pos, Context.of(this.livingEntity, blockState));
-         boolean bl = this.world.removeBlock(pos, false);
-         if (bl) {
-            block.destroy(this.world, pos, blockState);
-         }
+          this.world.gameEvent(GameEvent.BLOCK_DESTROY, pos, Context.of(this.livingEntity, blockState));
+          if (!this.world.removeBlock(pos, false)) {
+             return false;
+          }
 
-         if (this.isCreative()) {
-            return true;
-         } else {
-            ItemStack itemStack = this.livingEntity.getMainHandItem();
-            ItemStack itemStack2 = itemStack.copy();
-            boolean bl2 = true;
-            itemStack.getItem().mineBlock(itemStack, this.world, blockState, pos, this.livingEntity);
-         if (bl && bl2) {
-            Set<net.minecraft.world.entity.item.ItemEntity> existingDrops = Set.of();
-            if (this.livingEntity instanceof WorkerEntity
-                    && this.world instanceof ServerLevel serverLevel) {
-               existingDrops = new HashSet<>(serverLevel.getEntitiesOfClass(
-                       net.minecraft.world.entity.item.ItemEntity.class,
-                       new AABB(pos).inflate(1.5)));
-            }
-            Block.dropResources(blockState, this.world, pos, blockEntity, this.livingEntity, itemStack2);
-            if (this.livingEntity instanceof WorkerEntity worker
-                    && this.world instanceof ServerLevel serverLevel) {
-               for (net.minecraft.world.entity.item.ItemEntity drop : serverLevel.getEntitiesOfClass(
-                       net.minecraft.world.entity.item.ItemEntity.class,
-                       new AABB(pos).inflate(1.5))) {
-                  if (!existingDrops.contains(drop)) drop.setThrower(worker);
-               }
-            }
-         }
+          block.destroy(this.world, pos, blockState);
 
-            return true;
-         }
+          if (!this.isCreative()) {
+             ItemStack itemStack = getStackInHand(this.livingEntity, InteractionHand.MAIN_HAND);
+             ItemStack itemStack2 = itemStack.copy();
+             itemStack.getItem().mineBlock(itemStack, this.world, blockState, pos, this.livingEntity);
+             Set<net.minecraft.world.entity.item.ItemEntity> existingDrops = Set.of();
+             if (this.livingEntity instanceof WorkerEntity
+                     && this.world instanceof ServerLevel serverLevel) {
+                existingDrops = new HashSet<>(serverLevel.getEntitiesOfClass(
+                        net.minecraft.world.entity.item.ItemEntity.class,
+                        new AABB(pos).inflate(1.5)));
+             }
+             Block.dropResources(blockState, this.world, pos, blockEntity, this.livingEntity, itemStack2);
+             if (this.livingEntity instanceof WorkerEntity worker
+                     && this.world instanceof ServerLevel serverLevel) {
+                for (net.minecraft.world.entity.item.ItemEntity drop : serverLevel.getEntitiesOfClass(
+                        net.minecraft.world.entity.item.ItemEntity.class,
+                        new AABB(pos).inflate(1.5))) {
+                   if (!existingDrops.contains(drop)) {
+                      drop.setThrower(worker);
+                   }
+                }
+             }
+          }
+
+          if (this.livingEntity instanceof WorkerEntity worker) {
+             worker.recordBaritoneBlockBroken(pos, blockState);
+          }
+          return true;
       }
    }
 
    public InteractionResult interactItem(LivingEntity player, Level world, ItemStack stack, InteractionHand hand) {
       if (this.gameMode == GameType.SPECTATOR) {
          return InteractionResult.PASS;
-      } else {
-         int i = stack.getCount();
-         int j = stack.getDamageValue();
+      }
 
-         try {
-            InteractionResultHolder<ItemStack> typedActionResult;
-            if (stack.getItem() instanceof BucketItem bucketItem) {
-               typedActionResult = this.useBucket(bucketItem, world, player, hand);
-            } else {
-               typedActionResult = stack.use(world, null, hand);
+      ItemStack original = getStackInHand(player, hand);
+      if (original.isEmpty()) {
+         return InteractionResult.PASS;
+      }
+
+      try {
+         if (original.getItem() instanceof BucketItem bucketItem) {
+            InteractionResultHolder<ItemStack> result = this.useBucket(bucketItem, world, player, hand);
+            ItemStack resultStack = result.getObject();
+            if (resultStack == null) {
+               return result.getResult();
             }
-
-            ItemStack itemStack = (ItemStack)typedActionResult.getObject();
-            if (itemStack == stack && itemStack.getCount() == i && itemStack.getUseDuration(player) <= 0 && itemStack.getDamageValue() == j) {
-               return typedActionResult.getResult();
-            } else if (typedActionResult.getResult() == InteractionResult.FAIL && itemStack.getUseDuration(player) > 0 && !player.isUsingItem()) {
-               return typedActionResult.getResult();
-            } else {
-               if (stack != itemStack) {
-                  player.setItemInHand(hand, itemStack);
-               }
-
-               if (this.isCreative() && itemStack != ItemStack.EMPTY) {
-                  itemStack.setCount(i);
-                  if (itemStack.isDamageableItem() && itemStack.getDamageValue() != j) {
-                     itemStack.setDamageValue(j);
-                  }
-               }
-
-               if (itemStack.isEmpty()) {
-                  player.setItemInHand(hand, ItemStack.EMPTY);
-               }
-
-               return typedActionResult.getResult();
+            if (result.getResult().consumesAction()
+                  && !ItemStack.matches(getStackInHand(player, hand), resultStack)) {
+               this.commitHandResult(player, hand, original, resultStack);
             }
-         } catch (Exception var10) {
-            return InteractionResult.PASS;
+            return result.getResult();
          }
+
+         ItemStack working = original.copy();
+         InteractionResultHolder<ItemStack> result = working.use(world, asPlayer(player), hand);
+         ItemStack resultStack = result.getObject();
+         if (resultStack == null) {
+            return result.getResult();
+         }
+         if (result.getResult() == InteractionResult.FAIL) {
+            return result.getResult();
+         }
+         if (result.getResult().consumesAction() || !ItemStack.matches(original, resultStack)) {
+            this.commitHandResult(player, hand, original, resultStack);
+         }
+         return result.getResult();
+      } catch (RuntimeException exception) {
+         return InteractionResult.PASS;
       }
    }
 
+   private void commitHandResult(LivingEntity player, InteractionHand hand, ItemStack original, ItemStack result) {
+      if (this.isCreative() && !result.isEmpty()) {
+         result.setCount(original.getCount());
+         if (result.isDamageableItem()) {
+            result.setDamageValue(original.getDamageValue());
+         }
+      }
+      setStackInHand(player, hand, result.isEmpty() ? ItemStack.EMPTY : result);
+   }
+
    public InteractionResultHolder<ItemStack> useBucket(BucketItem bucket, Level world, LivingEntity user, InteractionHand hand) {
-      ItemStack itemStack = user.getItemInHand(hand);
+      ItemStack itemStack = getStackInHand(user, hand).copy();
+      Player player = asPlayer(user);
       BlockHitResult blockHitResult = raycast(world, user, ((IBucketAccessor)bucket).getFluid() == Fluids.EMPTY ? Fluid.SOURCE_ONLY : Fluid.NONE);
       if (blockHitResult.getType() == Type.MISS) {
          return InteractionResultHolder.pass(itemStack);
@@ -389,7 +422,7 @@ public class LivingEntityInteractionManager {
             BlockState blockState = world.getBlockState(blockPos);
             if (blockState.getBlock() instanceof BucketPickup) {
                BucketPickup fluidDrainable = (BucketPickup)blockState.getBlock();
-               ItemStack itemStack2 = fluidDrainable.pickupBlock(null, world, blockPos, blockState);
+                ItemStack itemStack2 = fluidDrainable.pickupBlock(player, world, blockPos, blockState);
                if (!itemStack2.isEmpty()) {
                   fluidDrainable.getPickupSound().ifPresent(sound -> user.playSound(sound, 1.0F, 1.0F));
                   world.gameEvent(user, GameEvent.FLUID_PICKUP, blockPos);
@@ -404,9 +437,10 @@ public class LivingEntityInteractionManager {
             BlockPos blockPos3 = blockState.getBlock() instanceof LiquidBlockContainer && ((IBucketAccessor)bucket).getFluid() == Fluids.WATER
                ? blockPos
                : blockPos2;
-            if (bucket.emptyContents(null, world, blockPos3, blockHitResult)) {
-               bucket.checkExtraContent(null, world, itemStack, blockPos3);
-               return InteractionResultHolder.sidedSuccess(new ItemStack(Items.BUCKET), world.isClientSide());
+             if (bucket.emptyContents(player, world, blockPos3, blockHitResult, itemStack)) {
+                bucket.checkExtraContent(player, world, itemStack, blockPos3);
+                ItemStack itemStack3 = exchangeStack(itemStack, user, new ItemStack(Items.BUCKET));
+                return InteractionResultHolder.sidedSuccess(itemStack3, world.isClientSide());
             } else {
                return InteractionResultHolder.fail(itemStack);
             }
@@ -436,12 +470,19 @@ public class LivingEntityInteractionManager {
    }
 
    public static ItemStack exchangeStack(ItemStack inputStack, LivingEntity player, ItemStack outputStack) {
+      if (inputStack == null || inputStack.isEmpty() || outputStack == null || outputStack.isEmpty()) {
+         return inputStack;
+      }
       inputStack.shrink(1);
       if (inputStack.isEmpty()) {
          return outputStack;
       } else {
-         if (!((IInventoryProvider)player).getLivingInventory().insertStack(outputStack)) {
-            player.spawnAtLocation(outputStack);
+         ItemStack remainder = outputStack.copy();
+         if (player instanceof IInventoryProvider provider) {
+            provider.getLivingInventory().insertStack(remainder);
+         }
+         if (!remainder.isEmpty()) {
+            player.spawnAtLocation(remainder);
          }
 
          return inputStack;
@@ -453,8 +494,12 @@ public class LivingEntityInteractionManager {
    }
 
    public InteractionResult interactBlock(LivingEntity player, Level world, ItemStack stack, InteractionHand hand, BlockHitResult hitResult) {
+      ItemStack original = getStackInHand(player, hand);
+      if (original.isEmpty()) {
+         return InteractionResult.PASS;
+      }
       BlockPos blockPos = hitResult.getBlockPos();
-      if (player instanceof WorkerEntity worker && stack.getItem() instanceof BlockItem
+      if (player instanceof WorkerEntity worker && original.getItem() instanceof BlockItem
             && (!worker.configuration().pathing().allowBlockPlacement
             || !worker.canModifyAt(blockPos.relative(hitResult.getDirection())))) {
          return InteractionResult.FAIL;
@@ -463,21 +508,26 @@ public class LivingEntityInteractionManager {
       if (!blockState.getBlock().isEnabled(world.enabledFeatures())) {
          return InteractionResult.FAIL;
       } else {
-         boolean bl = !player.getMainHandItem().isEmpty() || !player.getOffhandItem().isEmpty();
+         boolean bl = !getStackInHand(player, InteractionHand.MAIN_HAND).isEmpty()
+            || !getStackInHand(player, InteractionHand.OFF_HAND).isEmpty();
          boolean bl2 = this.shouldCancelInteraction() && bl;
-         ItemStack itemStack = stack.copy();
+         ItemStack itemStack = original.copy();
          if (!bl2) {
             try {
-               InteractionResult actionResult = blockState.useItemOn(stack, world, null, hand, hitResult).result();
-               if (actionResult.consumesAction()) {
-                  return actionResult;
+               ItemInteractionResult actionResult = blockState.useItemOn(itemStack, world, asPlayer(player), hand, hitResult);
+               if (actionResult == ItemInteractionResult.FAIL) {
+                  return InteractionResult.FAIL;
                }
-            } catch (NullPointerException var14) {
+               if (actionResult.consumesAction()) {
+                  this.commitHandResult(player, hand, original, itemStack);
+                  return actionResult.result();
+               }
+            } catch (RuntimeException exception) {
             }
          }
 
-         if (!stack.isEmpty()) {
-            UseOnContext itemUsageContext = new UseOnContext(player.level(), null, hand, player.getItemInHand(hand), hitResult) {
+         if (!itemStack.isEmpty()) {
+            UseOnContext itemUsageContext = new UseOnContext(player.level(), asPlayer(player), hand, itemStack, hitResult) {
                public boolean isSecondaryUseActive() {
                   // A server-controlled worker has no client key state.  The
                   // normal (non-secondary) placement path is authoritative.
@@ -485,12 +535,15 @@ public class LivingEntityInteractionManager {
                }
             };
             InteractionResult actionResult2;
-            if (this.isCreative()) {
-               int i = stack.getCount();
-               actionResult2 = stack.useOn(itemUsageContext);
-               stack.setCount(i);
-            } else {
-               actionResult2 = stack.useOn(itemUsageContext);
+            try {
+               actionResult2 = itemStack.useOn(itemUsageContext);
+            } catch (RuntimeException exception) {
+               return InteractionResult.PASS;
+            }
+
+            if (actionResult2 != InteractionResult.FAIL
+                  && (actionResult2.consumesAction() || !ItemStack.matches(original, itemStack))) {
+               this.commitHandResult(player, hand, original, itemStack);
             }
 
             return actionResult2;

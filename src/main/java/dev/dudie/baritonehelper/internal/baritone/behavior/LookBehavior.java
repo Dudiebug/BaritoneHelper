@@ -86,7 +86,12 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
       LivingEntity entity = this.ctx.entity();
       double lookScrambleFactor = this.baritone.settings().randomLooking.get();
-      updateLook(entity, actualTarget, lookScrambleFactor, !this.baritone.settings().freeLook.get());
+      // Client Baritone's pitch nudge keeps mouse-driven player look from
+      // sticking at an extreme angle. A forced movement rotation is already
+      // authoritative; nudging it leaves the server entity one degree away
+      // from Rotation.isReallyCloseTo and prevents the mining click forever.
+      updateLook(entity, actualTarget, lookScrambleFactor,
+            !forcePrimary && !this.baritone.settings().freeLook.get());
    }
 
    private static void updateLook(LivingEntity entity, Rotation target, double lookScrambleFactor, boolean nudgePitch) {

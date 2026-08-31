@@ -176,6 +176,7 @@ public final class Baritone implements IBaritone {
     }
 
     public void shutdown() {
+        this.mineProcess.shutdown();
         this.pathingBehavior.shutdown();
         this.inputOverrideHandler.clearAllKeys();
         this.pathingControlManager.cancelEverything();
