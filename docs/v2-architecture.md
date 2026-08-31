@@ -34,7 +34,10 @@ and disposed on every entity removal, dismissal, stop, or engine reset. The
 engine uses the entity's `EntityContext`, `LivingEntityInventory`, and
 `LivingEntityInteractionManager`; it never loads a client-only Minecraft class
 on a dedicated server. A fixed two-thread executor is used only for bounded
-path calculations and is shut down by the runtime lifecycle.
+path calculations over immutable copies of loaded ticketed chunk sections,
+hotbar state, and relevant settings. A calculation generation token rejects
+late callbacks after cancellation or goal replacement, and the executor is
+shut down by the runtime lifecycle.
 
 The worker controller submits `GoalBlock` goals to the embedded
 `CustomGoalProcess`. Baritone owns movement inputs and path execution,
@@ -48,9 +51,13 @@ counts, drop pickup, storage, watchdogs, and cancellation.
 progress, work-area dimension/center/radii, storage, exclusions, no-work zones,
 pathing flags, traversal-block allowlist, and a monotonic revision. The scanner
 uses an incremental chunk frontier with a bounded per-tick block budget rather
-than repeatedly scanning a cubic volume. Candidate chunks are ordered around
-the configured work center, and all candidate, path, break, place, and storage
-operations enforce `NO_MODIFY`/`NO_ENTER` zones.
+than repeatedly scanning a cubic volume. Candidate chunks are prioritized near
+the worker while the configured center and radii remain the inclusion boundary.
+Initially unloaded chunks are explicitly requested, awaited, scanned, and
+released. Candidate work stances are evaluated for support, collision,
+six-block reach, and line of sight from the hypothetical stance eye. A bounded
+candidate cache survives individual collections, and all candidate, path,
+break, place, and storage operations enforce `NO_MODIFY`/`NO_ENTER` zones.
 
 The finite goal counts successfully broken source blocks only. Breaking uses
 the real progressive interaction manager, server break hooks, tool speed,
@@ -73,15 +80,20 @@ client intents. Every intent includes a request UUID and expected revision.
 The server validates ownership, entity identity, dimensions, registry IDs,
 numeric limits, and revisions, then returns an acknowledgement plus a fresh
 snapshot. State transitions and activity history are bounded and persisted.
+Live snapshots also expose frontier progress, scan/candidate counters, separate
+search and worker ticket counts, and path status, node, cost, and sample data.
 
 ## Chunk and restart lifecycle
 
-Active workers hold a bounded entity-owned ticket set containing a local 3x3
-window and route-critical target, work, storage, and look-ahead chunks. Tickets
-are updated as plans change and are released on stop, completion, dismissal,
-administrative removal, and engine disposal. Persisted configuration is
-reloaded after restart, but stale calculated paths are never authoritative;
-the scanner and Baritone recalculate them.
+Active workers hold at most 16 entity-owned route tickets prioritized for the
+worker, target/work/storage, and bounded route look-ahead. Frontier loading has
+a distinct search-ticket reason capped at four chunks. Search tickets release
+after scanning or cursor closure; all tickets release on stop, completion,
+dismissal, administrative removal, and engine disposal. Persisted configuration
+is reloaded after restart, but stale calculated paths are never authoritative;
+the scanner and Baritone recalculate them. Path lifecycle is reported as
+`IDLE`, `CALCULATING`, `PATH_FOUND`, `EXECUTING`, `ARRIVED`, `NO_PATH`,
+`CANCELLED`, or `FAILED`.
 
 ## Compatibility and licensing
 

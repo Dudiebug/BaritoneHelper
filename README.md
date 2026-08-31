@@ -46,23 +46,34 @@ itself.
 
 The **Activity Log** shows bounded timestamped state transitions and resume
 notes. The status area reports the server-authoritative job/activity/runtime,
-current destination, progress, inventory, ticket count, replan age, and exact
-blocking reason.
+current destination, progress, inventory, worker/search ticket counts, frontier
+coverage, candidate counts, path state/cost/sample, replan age, and exact
+blocking reason. Area presets provide horizontal radii 32/64/128/256/512 and
+vertical radii 16/32/64/128 without hiding the editable exact values.
 
 ## Safety and operation
 
 Targets are found by an incremental chunk frontier, not an O(radius³) repeated
-scan. Work areas default to 64 horizontal / 32 vertical blocks and are limited
-to 8–512 / 4–128. No-work zones support `NO_MODIFY` (walk-through only) and
-`NO_ENTER` (path-forbidden) modes and are enforced by scanning, path costs,
-interaction, placement, pickup, and storage validation.
+scan. Frontier chunks inside the configured area are requested, observed until
+loaded, scanned with a 4,096-position per-worker tick budget, and released.
+Candidate interaction stances use hypothetical eye position, reach, support,
+collision, and line of sight; the worker does not need to see the resource from
+its current position before considering it. Work areas default to 64 horizontal
+/ 32 vertical blocks and are limited to 8–512 / 4–128. No-work zones support
+`NO_MODIFY` (walk-through only) and `NO_ENTER` (path-forbidden) modes and are
+enforced by scanning, path costs, interaction, placement, pickup, and storage
+validation.
 
 Mining is real progressive server interaction: tool selection, hardness, speed,
 enchantments, durability, break animation, game rules, hooks, and normal
 `ItemEntity` drops are preserved. The worker physically collects those drops.
 Baritone movement handles ordinary travel, jumps, parkour, pillaring, bridging,
-obstruction clearing, and water routes with bounded entity-owned tickets, so an
-active job can continue while its owner is offline.
+obstruction clearing, and water routes from immutable loaded-chunk/inventory
+snapshots. Path state is explicit (`CALCULATING`, `PATH_FOUND`, `EXECUTING`,
+`ARRIVED`, `NO_PATH`, `CANCELLED`, or `FAILED`), and stale asynchronous results
+cannot revive a cancelled goal. Worker route tickets are capped at 16 and
+frontier search tickets at 4, so an active job can continue while its owner is
+offline without unbounded chunk retention.
 
 ## Build and verification
 

@@ -19,7 +19,19 @@ fi
 gradle=("$java_bin" -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain)
 "${gradle[@]}" clean test runGameTestServer build --no-daemon --console=plain
 
-test -s build/libs/baritonehelper-1.0.0.jar
+mapfile -t runtime_jars < <(find build/libs -maxdepth 1 -type f -name 'baritonehelper-*.jar' ! -name '*-sources.jar' -print)
+mapfile -t source_jars < <(find build/libs -maxdepth 1 -type f -name 'baritonehelper-*-sources.jar' -print)
+if [[ "${#runtime_jars[@]}" != 1 || "${#source_jars[@]}" != 1 ]]; then
+  echo "Expected exactly one runtime JAR and one source JAR." >&2
+  exit 1
+fi
+mod_version="$(sed -n 's/^mod_version=//p' gradle.properties)"
+runtime_jar="build/libs/baritonehelper-${mod_version}.jar"
+source_jar="build/libs/baritonehelper-${mod_version}-sources.jar"
+test "${runtime_jars[0]}" = "$runtime_jar"
+test "${source_jars[0]}" = "$source_jar"
+test -s "$runtime_jar"
+test -s "$source_jar"
 test ! -e src/main/java/dev/dudie/buddybot
 test ! -e src/main/resources/data/buddybot
 test -f src/main/resources/assets/buddybot/models/item/buddy_bot.json

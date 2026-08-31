@@ -1,6 +1,6 @@
 # Long-range target discovery executable specification
 
-Status: autonomous run; human approval was not obtained before implementation.
+Status: implemented; local verification evidence is recorded in `EVIDENCE.md`.
 
 ## Contract
 

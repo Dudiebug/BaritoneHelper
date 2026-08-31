@@ -9,10 +9,15 @@
 - Mining uses `LivingEntityInteractionManager` progressive start/continue/stop
   actions. Normal world drops remain `ItemEntity` instances and are physically
   acquired by the worker.
-- `WorkerPlanner.SearchCursor` scans an ordered chunk frontier with a bounded
-  per-tick budget and returns separate resource/work positions.
-- Entity-owned tickets are capped at 16 and released on every stop/completion/
-  removal path.
+- `WorkerPlanner.SearchCursor` requests, waits for, scans, and releases an
+  ordered chunk frontier with a 4,096-position per-tick budget. It caches up to
+  32 candidates and returns separate resource/work positions evaluated from a
+  hypothetical interaction eye.
+- Route tickets are capped at 16 and separate search-frontier tickets at 4;
+  both release on their normal and cancellation lifecycles.
+- Path calculations use immutable loaded-chunk and hotbar snapshots. Explicit
+  statuses and generation tokens prevent stale asynchronous results from
+  reviving cancelled or replaced goals.
 
 ## GUI and network
 
@@ -35,11 +40,14 @@ fields are ignored and stale paths are recalculated.
 
 The JUnit contract suite covers canonical assets/recipes, removal of legacy
 rescue/combat/following architecture, explicit dashboard controls, visible
-feedback, and separate target/work positions. NeoForge GameTests cover
+feedback, separate target/work positions, bounded search tickets, immutable
+path snapshots, and path-failure status. NeoForge GameTests cover
 configuration and migration, real progressive break/drop pickup, vertical
 interaction, inventory/storage conservation, exclusions, finite/unlimited goals,
 watchdog/replanning, explicit Start/Stop/idempotency, offline operation, ticket
-cleanup, and worker protection behavior.
+cleanup, worker protection behavior, distances 4/16/32/64/128, initially
+unloaded chunks, corners/walls, underground and vertical targets, radius and
+no-work boundaries, multiple targets, restart, and both exact A–E sequences.
 
 Run the release gate under Java 21:
 
@@ -52,8 +60,10 @@ Run the release gate under Java 21:
 The build must contain exactly one runtime JAR and one source JAR. No release is
 published unless all commands pass and the artifact/version checks succeed.
 
-The final release-gate run on 2026-08-30 passed 14 JUnit tests, all 18 required
-NeoForge GameTests, and the Java 21 build. It produced
-`build/libs/baritonehelper-2.0.0.jar` (529,693 bytes) and
-`build/libs/baritonehelper-2.0.0-sources.jar` (300,691 bytes); the embedded
+The final release-gate run on 2026-08-30 passed all 15 JUnit tests, all 35
+required NeoForge GameTests, and the Java 21 build. The two exact 128-block
+acceptance runs measured maximum 4,096-position search slices of 15.9953 ms and
+10.02 ms; every measured slice remained below the enforced 50 ms ceiling. The
+build produced `build/libs/baritonehelper-2.0.0.jar` (559,561 bytes) and
+`build/libs/baritonehelper-2.0.0-sources.jar` (312,778 bytes); the embedded
 metadata reports version 2.0.0 and license `MIT AND LGPL-3.0-or-later`.
