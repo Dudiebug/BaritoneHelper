@@ -60,6 +60,11 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
       }
 
       this.inputForceStateMap.clear();
+      LivingEntity entity = this.ctx.entity();
+      entity.xxa = 0.0F;
+      entity.zza = 0.0F;
+      entity.setShiftKeyDown(false);
+      entity.setJumping(false);
       this.needsUpdate = true;
    }
 

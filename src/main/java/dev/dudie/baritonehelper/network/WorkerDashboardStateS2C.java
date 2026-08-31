@@ -77,11 +77,29 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
             int capacity,
             int itemCount,
             int ticketCount,
+            int searchTicketCount,
+            int totalTicketCount,
             int replanAttempts,
             int lastProgressAgeTicks,
             int chunksExamined,
+            int frontierIndex,
+            int frontierSize,
+            int chunksScanned,
+            int positionsExamined,
+            int matchingBlocks,
+            int candidatesFound,
+            int candidatesRejectedByPolicy,
+            int candidatesRejectedAsUnreachable,
+            int cachedCandidates,
+            boolean waitingForSearchChunk,
+            boolean pathRequested,
+            String lastScannedChunk,
+            String requestedSearchChunk,
+            String pathingStatus,
+            String lastNavigationDestination,
             int pathNode,
             int pathLength,
+            double pathCost,
             boolean allowBreakingObstructions,
             boolean allowBlockPlacement,
             boolean allowBridging,
@@ -132,11 +150,29 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
                     worker.getContainerSize(),
                     worker.inventoryItemCount(),
                     worker.workerTicketCount(),
+                    worker.searchTicketCount(),
+                    worker.totalTicketCount(),
                     worker.replanAttempts(),
                     worker.lastProgressAgeTicks(),
                     worker.chunksExamined(),
+                    worker.frontierIndex(),
+                    worker.frontierSize(),
+                    worker.chunksScanned(),
+                    worker.positionsExamined(),
+                    worker.matchingBlocks(),
+                    worker.candidatesFound(),
+                    worker.candidatesRejectedByPolicy(),
+                    worker.candidatesRejectedAsUnreachable(),
+                    worker.cachedCandidateCount(),
+                    worker.waitingForSearchChunk(),
+                    worker.pathRequested(),
+                    worker.lastScannedChunk(),
+                    worker.requestedSearchChunk(),
+                    worker.pathingStatus().name(),
+                    worker.lastNavigationDestination().map(BlockPos::toString).orElse(""),
                     worker.currentPathNode(),
                     worker.currentPathLength(),
+                    worker.currentPathCost(),
                     settings.allowBreakingObstructions,
                     settings.allowBlockPlacement,
                     settings.allowBridging,
@@ -179,11 +215,29 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
         buffer.writeVarInt(snapshot.capacity());
         buffer.writeVarInt(snapshot.itemCount());
         buffer.writeVarInt(snapshot.ticketCount());
+        buffer.writeVarInt(snapshot.searchTicketCount());
+        buffer.writeVarInt(snapshot.totalTicketCount());
         buffer.writeVarInt(snapshot.replanAttempts());
         buffer.writeVarInt(snapshot.lastProgressAgeTicks());
         buffer.writeVarInt(snapshot.chunksExamined());
+        buffer.writeVarInt(snapshot.frontierIndex());
+        buffer.writeVarInt(snapshot.frontierSize());
+        buffer.writeVarInt(snapshot.chunksScanned());
+        buffer.writeVarInt(snapshot.positionsExamined());
+        buffer.writeVarInt(snapshot.matchingBlocks());
+        buffer.writeVarInt(snapshot.candidatesFound());
+        buffer.writeVarInt(snapshot.candidatesRejectedByPolicy());
+        buffer.writeVarInt(snapshot.candidatesRejectedAsUnreachable());
+        buffer.writeVarInt(snapshot.cachedCandidates());
+        buffer.writeBoolean(snapshot.waitingForSearchChunk());
+        buffer.writeBoolean(snapshot.pathRequested());
+        writeString(buffer, snapshot.lastScannedChunk(), 64);
+        writeString(buffer, snapshot.requestedSearchChunk(), 64);
+        writeString(buffer, snapshot.pathingStatus(), 32);
+        writeString(buffer, snapshot.lastNavigationDestination(), 128);
         buffer.writeVarInt(snapshot.pathNode());
         buffer.writeVarInt(snapshot.pathLength());
+        buffer.writeDouble(snapshot.pathCost());
         buffer.writeBoolean(snapshot.allowBreakingObstructions());
         buffer.writeBoolean(snapshot.allowBlockPlacement());
         buffer.writeBoolean(snapshot.allowBridging());
@@ -236,11 +290,29 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
         int capacity = buffer.readVarInt();
         int itemCount = buffer.readVarInt();
         int tickets = buffer.readVarInt();
+        int searchTickets = buffer.readVarInt();
+        int totalTickets = buffer.readVarInt();
         int replans = buffer.readVarInt();
         int lastProgress = buffer.readVarInt();
         int chunksExamined = buffer.readVarInt();
+        int frontierIndex = buffer.readVarInt();
+        int frontierSize = buffer.readVarInt();
+        int chunksScanned = buffer.readVarInt();
+        int positionsExamined = buffer.readVarInt();
+        int matchingBlocks = buffer.readVarInt();
+        int candidatesFound = buffer.readVarInt();
+        int candidatesRejectedByPolicy = buffer.readVarInt();
+        int candidatesRejectedAsUnreachable = buffer.readVarInt();
+        int cachedCandidates = buffer.readVarInt();
+        boolean waitingForSearchChunk = buffer.readBoolean();
+        boolean pathRequested = buffer.readBoolean();
+        String lastScannedChunk = buffer.readUtf(64);
+        String requestedSearchChunk = buffer.readUtf(64);
+        String pathingStatus = buffer.readUtf(32);
+        String lastNavigationDestination = buffer.readUtf(128);
         int pathNode = buffer.readVarInt();
         int pathLength = buffer.readVarInt();
+        double pathCost = buffer.readDouble();
         boolean allowBreaking = buffer.readBoolean();
         boolean allowPlacement = buffer.readBoolean();
         boolean allowBridging = buffer.readBoolean();
@@ -269,8 +341,12 @@ public record WorkerDashboardStateS2C(Snapshot snapshot) implements CustomPacket
                 workerId, revision, dimension, target, job, activity, reason, runtime,
                 requested, unlimited, completed, hasTarget, currentTarget, hasWork, currentWork,
                 hasStorage, storageDimension, storage, areaDimension, areaCenter, horizontal, vertical,
-                used, capacity, itemCount, tickets, replans, lastProgress,
-                chunksExamined, pathNode, pathLength,
+                used, capacity, itemCount, tickets, searchTickets, totalTickets, replans, lastProgress,
+                chunksExamined, frontierIndex, frontierSize, chunksScanned, positionsExamined,
+                matchingBlocks, candidatesFound, candidatesRejectedByPolicy,
+                candidatesRejectedAsUnreachable, cachedCandidates, waitingForSearchChunk, pathRequested,
+                lastScannedChunk, requestedSearchChunk, pathingStatus, lastNavigationDestination,
+                pathNode, pathLength, pathCost,
                 allowBreaking, allowPlacement, allowBridging, allowPillaring, allowParkour,
                 allowWater, safer, avoidDestructive, exclusions, zones, history, resumeNote);
     }

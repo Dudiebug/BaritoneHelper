@@ -1,6 +1,7 @@
 package dev.dudie.baritonehelper.worker;
 
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.internal.baritone.api.behavior.PathingStatus;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -39,7 +40,9 @@ public final class WorkerController {
     private int pendingDropTicks;
     private double bestDistance = Double.MAX_VALUE;
     private int chunksExamined;
+    private long maxSearchTickNanos;
     private boolean pathRequested;
+    private @org.jetbrains.annotations.Nullable BlockPos lastNavigationDestination;
     private boolean closeInteractionFallback;
 
     public WorkerController(WorkerEntity worker) {
@@ -56,6 +59,7 @@ public final class WorkerController {
                 case COMPLETED -> WorkerActivity.IDLE;
                 default -> WorkerActivity.IDLE;
             };
+            closeSearchCursor();
             clearPlan(false);
             worker.releaseWorkerTickets();
             return;
@@ -73,12 +77,35 @@ public final class WorkerController {
     public int replanAttempts() { return replanAttempts; }
     public int lastProgressAgeTicks() { return lastProgressAgeTicks; }
     public int chunksExamined() { return chunksExamined; }
+    public int chunksScanned() { return searchCursor == null ? 0 : searchCursor.chunksScanned(); }
+    public int positionsExamined() { return searchCursor == null ? 0 : searchCursor.positionsExamined(); }
+    public int matchingBlocks() { return searchCursor == null ? 0 : searchCursor.matchingBlocks(); }
+    public int candidatesFound() { return searchCursor == null ? 0 : searchCursor.candidatesFound(); }
+    public int candidatesRejectedByPolicy() {
+        return searchCursor == null ? 0 : searchCursor.candidatesRejectedByPolicy();
+    }
+    public int candidatesRejectedAsUnreachable() {
+        return searchCursor == null ? 0 : searchCursor.candidatesRejectedAsUnreachable();
+    }
+    public int cachedCandidateCount() { return searchCursor == null ? 0 : searchCursor.cachedCandidateCount(); }
+    public int frontierIndex() { return searchCursor == null ? 0 : searchCursor.frontierIndex(); }
+    public int frontierSize() { return searchCursor == null ? 0 : searchCursor.frontierSize(); }
+    public boolean waitingForSearchChunk() {
+        return searchCursor != null && searchCursor.waitingForChunk();
+    }
+    public boolean pathRequested() { return pathRequested; }
+    public Optional<BlockPos> lastNavigationDestination() {
+        return Optional.ofNullable(lastNavigationDestination);
+    }
+    public String lastScannedChunk() { return searchCursor == null ? "" : searchCursor.lastScannedChunk(); }
+    public String requestedSearchChunk() { return searchCursor == null ? "" : searchCursor.requestedChunk(); }
+    public long maxSearchTickNanos() { return maxSearchTickNanos; }
 
     public void resetTransientState() {
         worker.stopEngineProcesses();
         currentTarget = null;
         currentWorkPosition = null;
-        searchCursor = null;
+        closeSearchCursor();
         scanCooldown = 0;
         watchdogTicks = 0;
         replanAttempts = 0;
@@ -87,6 +114,7 @@ public final class WorkerController {
         lastProgressAgeTicks = 0;
         bestDistance = Double.MAX_VALUE;
         chunksExamined = 0;
+        maxSearchTickNanos = 0L;
         pathRequested = false;
         closeInteractionFallback = false;
         temporarilyRejected.clear();
@@ -123,8 +151,8 @@ public final class WorkerController {
             activity = WorkerActivity.COLLECTING;
             pendingDropTicks--;
             if (pendingDropTicks == 0) {
-                currentTarget = null;
-                currentWorkPosition = null;
+                worker.stopEngineProcesses();
+                clearPlan(false);
                 worker.setRuntimeState(WorkerRuntimeState.SEARCHING);
             }
             return;
@@ -144,11 +172,12 @@ public final class WorkerController {
             Optional<WorkerPlanner.CollectionPlan> plan = searchCursor.next(
                     level, worker, temporarilyRejected.keySet(), SEARCH_BLOCK_BUDGET);
             chunksExamined = searchCursor.chunksExamined();
+            maxSearchTickNanos = Math.max(maxSearchTickNanos, searchCursor.maxScanNanos());
             scanCooldown = 0;
             if (plan.isEmpty()) {
                 if (searchCursor.exhausted()) {
                     emptyScans++;
-                    searchCursor = null;
+                    closeSearchCursor();
                     scanCooldown = 5;
                     if (emptyScans >= MAX_EMPTY_SCANS) block(WorkerBlockReason.NO_MATCHING_BLOCKS);
                 }
@@ -159,6 +188,7 @@ public final class WorkerController {
             currentWorkPosition = plan.orElseThrow().workPosition();
             if (!worker.hasInventoryRoomFor(level.getBlockState(currentTarget))) {
                 worker.requestDepositOrBlock();
+                closeSearchCursor();
                 clearPlan(false);
                 return;
             }
@@ -168,11 +198,21 @@ public final class WorkerController {
         }
 
         if (currentTarget == null || currentWorkPosition == null) return;
+        PathingStatus pathingStatus = worker.pathingStatus();
+        if (pathRequested && (pathingStatus == PathingStatus.NO_PATH
+                || pathingStatus == PathingStatus.FAILED)) {
+            rejectCurrentTarget();
+            return;
+        }
         double distance = distanceTo(currentWorkPosition);
         boolean canInteract = distance <= ARRIVAL_DISTANCE_SQUARED
                 && distanceTo(currentTarget) <= INTERACTION_DISTANCE_SQUARED
                 && WorkerPlanner.hasLineOfSight(level, worker, currentTarget);
         if (canInteract) {
+            if (pathRequested) {
+                worker.stopEngineProcesses();
+                pathRequested = false;
+            }
             activity = WorkerActivity.BREAKING;
             worker.setRuntimeState(WorkerRuntimeState.BREAKING);
             if (!level.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) {
@@ -182,6 +222,7 @@ public final class WorkerController {
             BlockState state = level.getBlockState(currentTarget);
             if (!worker.hasInventoryRoomFor(state)) {
                 worker.requestDepositOrBlock();
+                closeSearchCursor();
                 clearPlan(false);
                 return;
             }
@@ -219,6 +260,7 @@ public final class WorkerController {
         if (worker.hasCargo()) {
             if (worker.storagePosition().isPresent()) {
                 worker.requestDepositOrBlock();
+                closeSearchCursor();
                 clearPlan(false);
             } else {
                 block(WorkerBlockReason.STORAGE_MISSING);
@@ -233,6 +275,7 @@ public final class WorkerController {
     }
 
     private void tickDeposit(ServerLevel level) {
+        closeSearchCursor();
         BlockPos storage = worker.storagePosition().orElse(null);
         if (storage == null) { block(WorkerBlockReason.STORAGE_MISSING); return; }
         if (!worker.storageIsIn(level)) { block(WorkerBlockReason.STORAGE_WRONG_DIMENSION); return; }
@@ -290,8 +333,18 @@ public final class WorkerController {
     /** Primary movement adapter: submit a Baritone goal, never vanilla navigation. */
     private void navigateTo(BlockPos destination) {
         if (pathRequested) return;
-        worker.beginPathTo(destination);
-        pathRequested = true;
+        lastNavigationDestination = destination.immutable();
+        pathRequested = worker.beginPathTo(destination);
+    }
+
+    private void rejectCurrentTarget() {
+        if (currentTarget != null) {
+            temporarilyRejected.put(currentTarget.asLong(), REJECTED_TARGET_TICKS);
+        }
+        worker.stopEngineProcesses();
+        clearPlan(false);
+        scanCooldown = 0;
+        activity = WorkerActivity.SEARCHING;
     }
 
     private double distanceTo(BlockPos position) {
@@ -319,6 +372,7 @@ public final class WorkerController {
 
     private void block(WorkerBlockReason reason) {
         worker.stopEngineProcesses();
+        closeSearchCursor();
         clearPlan(false);
         activity = WorkerActivity.BLOCKED;
         worker.markBlocked(reason);
@@ -327,12 +381,19 @@ public final class WorkerController {
     private void clearPlan(boolean clearRejected) {
         currentTarget = null;
         currentWorkPosition = null;
-        searchCursor = null;
         pathRequested = false;
+        lastNavigationDestination = null;
         watchdogTicks = 0;
         bestDistance = Double.MAX_VALUE;
         closeInteractionFallback = false;
         if (clearRejected) temporarilyRejected.clear();
+    }
+
+    private void closeSearchCursor() {
+        if (searchCursor != null) {
+            searchCursor.close(worker);
+            searchCursor = null;
+        }
     }
 
     private void tickRejectedTargets() {

@@ -81,6 +81,7 @@ public final class WorkerDashboardScreen extends Screen {
     private String selectedZoneId = "";
     private int zoneMode;
     private boolean zoneEnabled = true;
+    private final List<Button> areaPresetButtons = new ArrayList<>();
     private Button jobTab;
     private Button worldTab;
     private Button storageTab;
@@ -132,6 +133,7 @@ public final class WorkerDashboardScreen extends Screen {
 
     @Override
     protected void init() {
+        pathingButtons.clear();
         panelWidth = Math.min(760, Math.max(320, width - 20));
         panelHeight = Math.min(560, Math.max(420, height - 28));
         panelLeft = (width - panelWidth) / 2;
@@ -229,6 +231,15 @@ public final class WorkerDashboardScreen extends Screen {
         clearAreaButton = addRenderableWidget(Button.builder(Component.translatable("screen.baritonehelper.clear_area"), b -> send(new WorkerDashboardActionC2S(
                 workerEntityId(), revision(), WorkerDashboardActionC2S.Action.CLEAR_WORK_AREA)))
                 .bounds(panelLeft + 330, panelTop + 218, 112, 20).build());
+        areaPresetButtons.clear();
+        int[] horizontalPresets = {32, 64, 128, 256, 512};
+        int[] verticalPresets = {16, 32, 64, 128};
+        for (int i = 0; i < horizontalPresets.length; i++) {
+            areaPresetButtons.add(addAreaPresetButton(horizontalPresets[i], true, i));
+        }
+        for (int i = 0; i < verticalPresets.length; i++) {
+            areaPresetButtons.add(addAreaPresetButton(verticalPresets[i], false, i));
+        }
         addZoneButton = addRenderableWidget(Button.builder(Component.translatable("screen.baritonehelper.add_zone"), b -> {
             selectedZoneId = "";
             resetZoneEditor();
@@ -272,6 +283,19 @@ public final class WorkerDashboardScreen extends Screen {
         box.setFilter(valueText -> valueText.isEmpty() || valueText.startsWith("-")
                 || valueText.chars().allMatch(Character::isDigit));
         return box;
+    }
+
+    private Button addAreaPresetButton(int radius, boolean horizontal, int index) {
+        String key = horizontal
+                ? "screen.baritonehelper.horizontal_preset"
+                : "screen.baritonehelper.vertical_preset";
+        return addRenderableWidget(Button.builder(Component.translatable(key, radius), b -> {
+            if (horizontal) areaHorizontalBox.setValue(Integer.toString(radius));
+            else areaVerticalBox.setValue(Integer.toString(radius));
+            send(new WorkerDashboardActionC2S(workerEntityId(), revision(), areaPosition(),
+                    areaRadius(areaHorizontalBox), areaRadius(areaVerticalBox)));
+        }).bounds(panelLeft + 18 + index * 48,
+                panelTop + (horizontal ? 218 : 240), 45, 20).build());
     }
 
     private EditBox zoneBox(int x, int y, int value) {
@@ -414,6 +438,7 @@ public final class WorkerDashboardScreen extends Screen {
         useWorkerAreaButton.visible = world;
         selectAreaPointButton.visible = world;
         clearAreaButton.visible = world;
+        for (Button button : areaPresetButtons) button.visible = world;
         selectStorageButton.visible = tab == TAB_STORAGE;
         addZoneButton.visible = world;
         saveZoneButton.visible = world;
@@ -506,9 +531,10 @@ public final class WorkerDashboardScreen extends Screen {
             }
         }
         if (tab == TAB_WORLD && mouseX >= panelLeft + 18 && mouseX < panelLeft + panelWidth - 18
-                && mouseY >= panelTop + 326) {
-            int row = (int) ((mouseY - (panelTop + 326)) / 18);
-            if (row >= 0 && row < snapshot.noWorkZones().size()) {
+                && mouseY >= panelTop + 350) {
+            int row = (int) ((mouseY - (panelTop + 350)) / 18);
+            if (row >= 0 && row < visibleZoneRows()
+                    && row < snapshot.noWorkZones().size()) {
                 selectedZoneId = snapshot.noWorkZones().get(row).id();
                 loadSelectedZone();
                 updateButtons();
@@ -583,7 +609,7 @@ public final class WorkerDashboardScreen extends Screen {
         graphics.drawString(font, Component.translatable("screen.baritonehelper.progress", snapshot.completedCount(), snapshot.unlimitedCount() ? "∞" : Integer.toString(snapshot.requestedCount())), x, panelTop + 226, 0xB8E6B8);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.amount"), x, panelTop + 246, 0x9FB1C1);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.inventory", snapshot.usedSlots(), snapshot.capacity(), snapshot.itemCount()), x, panelTop + 342, 0xD9E8F5);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.diagnostics", snapshot.ticketCount(), snapshot.replanAttempts(), snapshot.lastProgressAgeTicks(), snapshot.chunksExamined(), snapshot.pathNode(), snapshot.pathLength()), x, panelTop + 357, 0x9FB1C1);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.diagnostics", snapshot.ticketCount(), snapshot.searchTicketCount(), snapshot.totalTicketCount(), snapshot.replanAttempts(), snapshot.lastProgressAgeTicks()), x, panelTop + 357, 0x9FB1C1);
     }
 
     private void renderWorld(GuiGraphics graphics) {
@@ -596,23 +622,29 @@ public final class WorkerDashboardScreen extends Screen {
         graphics.drawString(font, Component.translatable("screen.baritonehelper.z"), x + 158, panelTop + 126, 0x9FB1C1);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.horizontal"), x + 2, panelTop + 160, 0x9FB1C1);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.vertical"), x + 110, panelTop + 160, 0x9FB1C1);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.destination", snapshot.hasCurrentWorkPosition() ? formatPos(snapshot.currentWorkPosition()) : Component.translatable("screen.baritonehelper.none")), x + 8, panelTop + 224, 0xD9E8F5);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.storage", snapshot.hasStorage() ? formatPos(snapshot.storagePosition()) : Component.translatable("screen.baritonehelper.not_set")), x + 8, panelTop + 240, 0xD9E8F5);
+        int chunkSpan = snapshot.horizontalRadius() * 2 / 16 + 1;
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.destination", snapshot.hasCurrentWorkPosition() ? formatPos(snapshot.currentWorkPosition()) : Component.translatable("screen.baritonehelper.none")), x + 8, panelTop + 270, 0xD9E8F5);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.storage", snapshot.hasStorage() ? formatPos(snapshot.storagePosition()) : Component.translatable("screen.baritonehelper.not_set")), x + 8, panelTop + 286, 0xD9E8F5);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.area_coverage", chunkSpan * chunkSpan, chunkSpan, chunkSpan, snapshot.verticalRadius()), x + 8, panelTop + 302, 0xC5D4E0);
         int zoneLeft = rightColumnLeft();
         graphics.drawString(font, Component.translatable("screen.baritonehelper.zone_editor"), zoneLeft, panelTop + 78, 0xD9E8F5);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.zone_name"), zoneLeft, panelTop + 86, 0x8996A3);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.zone_center"), zoneLeft, panelTop + 114, 0x8996A3);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.zone_radii"), zoneLeft, panelTop + 144, 0x8996A3);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.no_work_zone_list"), x + 8, panelTop + 312, 0xD9E8F5);
-        for (int i = 0; i < snapshot.noWorkZones().size() && i < 8; i++) {
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.no_work_zone_list"), x + 8, panelTop + 334, 0xD9E8F5);
+        for (int i = 0; i < snapshot.noWorkZones().size() && i < visibleZoneRows(); i++) {
             var zone = snapshot.noWorkZones().get(i);
-            int y = panelTop + 330 + i * 18;
+            int y = panelTop + 352 + i * 18;
             if (zone.id().equals(selectedZoneId)) graphics.fill(x + 4, y - 2, panelLeft + panelWidth - 22, y + 14, 0xFF315A73);
             String name = zone.name().isBlank() ? zone.id() : zone.name();
             String mode = zone.mode() == 0 ? "NO_MODIFY" : "NO_ENTER";
             graphics.drawString(font, font.plainSubstrByWidth(name + " (" + mode + ")", panelWidth - 50), x + 8, y, 0xC5D4E0);
         }
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.world_hint"), x + 8, panelTop + 296, 0x8996A3);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.world_hint"), x + 8, panelTop + 318, 0x8996A3);
+    }
+
+    private int visibleZoneRows() {
+        return Math.max(0, Math.min(8, 1 + (panelHeight - 420) / 18));
     }
 
     private void renderStorage(GuiGraphics graphics) {
@@ -629,9 +661,14 @@ public final class WorkerDashboardScreen extends Screen {
         int x = panelLeft + 286;
         graphics.fill(x, panelTop + 56, panelLeft + panelWidth - 18, panelTop + 250, 0xFF18212C);
         graphics.drawString(font, Component.translatable("screen.baritonehelper.pathing_summary"), x + 8, panelTop + 66, 0xD9E8F5);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.diagnostics", snapshot.ticketCount(), snapshot.replanAttempts(), snapshot.lastProgressAgeTicks(), snapshot.chunksExamined(), snapshot.pathNode(), snapshot.pathLength()), x + 8, panelTop + 90, 0xC5D4E0);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.destination", snapshot.hasCurrentWorkPosition() ? formatPos(snapshot.currentWorkPosition()) : Component.translatable("screen.baritonehelper.none")), x + 8, panelTop + 110, 0xC5D4E0);
-        graphics.drawString(font, Component.translatable("screen.baritonehelper.pathing_hint"), x + 8, panelTop + 150, 0x8996A3);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.diagnostics", snapshot.ticketCount(), snapshot.searchTicketCount(), snapshot.totalTicketCount(), snapshot.replanAttempts(), snapshot.lastProgressAgeTicks()), x + 8, panelTop + 90, 0xC5D4E0);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.path_diagnostics", snapshot.pathingStatus(), snapshot.pathNode(), snapshot.pathLength(),
+                String.format(java.util.Locale.ROOT, "%.1f", snapshot.pathCost()), snapshot.pathRequested()), x + 8, panelTop + 108, 0xC5D4E0);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.search_diagnostics", snapshot.frontierIndex(), snapshot.frontierSize(), snapshot.chunksScanned(), snapshot.positionsExamined(), snapshot.matchingBlocks(), snapshot.candidatesFound(), snapshot.candidatesRejectedByPolicy(), snapshot.candidatesRejectedAsUnreachable(), snapshot.cachedCandidates()), x + 8, panelTop + 126, 0xC5D4E0);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.search_state", snapshot.waitingForSearchChunk(), snapshot.lastScannedChunk().isBlank() ? "-" : snapshot.lastScannedChunk(), snapshot.requestedSearchChunk().isBlank() ? "-" : snapshot.requestedSearchChunk()), x + 8, panelTop + 144, 0xC5D4E0);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.destination", snapshot.hasCurrentWorkPosition() ? formatPos(snapshot.currentWorkPosition()) : Component.translatable("screen.baritonehelper.none")), x + 8, panelTop + 166, 0xC5D4E0);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.last_route", snapshot.lastNavigationDestination().isBlank() ? Component.translatable("screen.baritonehelper.none") : snapshot.lastNavigationDestination()), x + 8, panelTop + 184, 0xC5D4E0);
+        graphics.drawString(font, Component.translatable("screen.baritonehelper.pathing_hint"), x + 8, panelTop + 220, 0x8996A3);
     }
 
     private void renderLog(GuiGraphics graphics) {

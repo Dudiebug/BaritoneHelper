@@ -95,6 +95,9 @@ public final class BaritoneHelper {
     public static final TicketController WORKER_TICKETS =
             new TicketController(
                     ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_worker"));
+    public static final TicketController SEARCH_TICKETS =
+            new TicketController(
+                    ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_search"));
 
     public BaritoneHelper(IEventBus modBus) {
         ENTITIES.register(modBus);
@@ -134,5 +137,6 @@ public final class BaritoneHelper {
 
     private void registerTicketController(RegisterTicketControllersEvent event) {
         event.register(WORKER_TICKETS);
+        event.register(SEARCH_TICKETS);
     }
 }

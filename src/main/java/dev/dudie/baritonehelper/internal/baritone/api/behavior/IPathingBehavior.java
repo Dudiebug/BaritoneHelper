@@ -67,4 +67,6 @@ public interface IPathingBehavior extends IBehavior {
    BetterBlockPos pathStart();
 
    boolean isSafeToCancel();
+
+   PathingStatus getStatus();
 }

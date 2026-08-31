@@ -57,6 +57,31 @@ class V2ArchitectureContractTest {
     }
 
     @Test
+    void longRangeSearchIsTicketedCachedAndIndependentOfCurrentEyeLos() throws IOException {
+        String planner = read("src/main/java/dev/dudie/baritonehelper/worker/WorkerPlanner.java");
+        String controller = read("src/main/java/dev/dudie/baritonehelper/worker/WorkerController.java");
+        String worker = read("src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java");
+        String blockState = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/utils/BlockStateInterface.java");
+        String calculation = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/pathing/movement/CalculationContext.java");
+        String pathing = read("src/main/java/dev/dudie/baritonehelper/internal/baritone/behavior/PathingBehavior.java");
+        assertTrue(planner.contains("requestedChunk"));
+        assertTrue(planner.contains("primeSearchTickets"));
+        assertTrue(planner.contains("MAX_SEARCH_TICKETS = 4"));
+        assertTrue(planner.contains("MAX_CACHED_CANDIDATES = 32"));
+        assertTrue(planner.contains("work.getX() + 0.5"));
+        assertTrue(planner.contains("work.getY() + worker.getEyeHeight()"));
+        assertFalse(planner.contains("getEyePosition()"));
+        assertTrue(worker.contains("SEARCH_TICKETS.forceChunk"));
+        assertTrue(worker.contains("workerController.resetTransientState()"));
+        assertTrue(controller.contains("PathingStatus.NO_PATH"));
+        assertTrue(calculation.contains("BlockStateInterface.threadSafe"));
+        assertTrue(blockState.contains("getStates().copy()"));
+        assertFalse(blockState.contains("getVisibleChunkIfPresent"));
+        assertTrue(pathing.contains("calculationGeneration"));
+        assertTrue(pathing.contains("this.inProgress != pathfinder"));
+    }
+
+    @Test
     void releaseMetadataIsV2AndIncludesSourceLicense() throws IOException {
         String properties = read("gradle.properties");
         assertTrue(properties.contains("mod_version=2.0.0"));

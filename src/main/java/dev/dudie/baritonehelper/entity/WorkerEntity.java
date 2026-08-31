@@ -7,6 +7,7 @@ import dev.dudie.baritonehelper.internal.baritone.api.entity.IInteractionManager
 import dev.dudie.baritonehelper.internal.baritone.api.entity.IInventoryProvider;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.LivingEntityInteractionManager;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.LivingEntityInventory;
+import dev.dudie.baritonehelper.internal.baritone.api.behavior.PathingStatus;
 import dev.dudie.baritonehelper.internal.baritone.api.pathing.goals.GoalBlock;
 import dev.dudie.baritonehelper.internal.baritone.utils.ToolSet;
 import dev.dudie.baritonehelper.internal.baritone.utils.player.EntityContext;
@@ -86,6 +87,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             NonNullList.withSize(EXPANDED_SLOTS, ItemStack.EMPTY);
     private final Set<ResourceLocation> exclusions = new LinkedHashSet<>();
     private final Set<Long> workerTicketChunks = new LinkedHashSet<>();
+    private final Set<Long> searchTicketChunks = new LinkedHashSet<>();
     private final WorkerController workerController = new WorkerController(this);
     private final WorkerJobConfiguration configuration = new WorkerJobConfiguration();
     private transient @Nullable Baritone baritoneEngine;
@@ -121,7 +123,27 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         this.moveControl = new MoveControl(this) {
             @Override
             public void tick() {
-                if (!WorkerEntity.this.job.activelyWorks()) super.tick();
+                if (WorkerEntity.this.job.activelyWorks()) {
+                    // Baritone supplies the analogue input values.  Vanilla
+                    // MoveControl normally also writes Mob#getSpeed; keeping
+                    // that value at zero makes LivingEntity#travel consume
+                    // the inputs without moving the worker.  A failed or
+                    // cancelled calculation can leave the previous analogue
+                    // input in place, so explicitly stop it once Baritone no
+                    // longer owns movement.
+                    if (WorkerEntity.this.baritoneEngine == null
+                            || WorkerEntity.this.baritoneEngine.getPathingBehavior().getCurrent() == null) {
+                        WorkerEntity.this.setSpeed(0.0F);
+                        WorkerEntity.this.xxa = 0.0F;
+                        WorkerEntity.this.zza = 0.0F;
+                        WorkerEntity.this.setJumping(false);
+                    } else {
+                        WorkerEntity.this.setSpeed((float) WorkerEntity.this.getAttributeValue(
+                                Attributes.MOVEMENT_SPEED));
+                    }
+                } else {
+                    super.tick();
+                }
             }
         };
         setPersistenceRequired();
@@ -170,6 +192,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         baritoneInventory = null;
         interactionManager = null;
         breakingPosition = null;
+        releaseSearchTickets();
     }
 
     @Override
@@ -563,6 +586,13 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         if (!(level() instanceof ServerLevel serverLevel) || !canModifyAt(position)) return false;
         if (!hasCorrectToolFor(position)) return false;
         if (interactionManager == null) baritoneEngine();
+        if (breakingPosition != null && breakingPosition.equals(position)
+                && !interactionManager.isMining() && !level().getBlockState(position).isAir()) {
+            // A rejected or interrupted finish leaves no active server mining
+            // operation.  Treat that as a fresh attempt instead of retaining
+            // a marker that can never make progress.
+            breakingPosition = null;
+        }
         if (breakingPosition == null || !breakingPosition.equals(position)) {
             cancelBreaking();
             breakingPosition = position.immutable();
@@ -609,6 +639,12 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     public boolean brokeBlockThisTick() { return brokeBlockThisTick; }
     public boolean isBreaking() { return breakingPosition != null; }
+    public boolean interactionManagerMining() {
+        return interactionManager != null && interactionManager.isMining();
+    }
+    public int blockBreakingProgress() {
+        return interactionManager == null ? -1 : interactionManager.getBlockBreakingProgress();
+    }
 
     private void collectNearbyDrops() {
         if (!(level() instanceof ServerLevel serverLevel)) return;
@@ -630,10 +666,20 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
     }
 
-    public void beginPathTo(BlockPos destination) {
+    public boolean beginPathTo(BlockPos destination) {
+        ensureWorkerTickets();
+        if (level() instanceof ServerLevel serverLevel) {
+            for (long packed : workerTicketChunks) {
+                ChunkPos chunk = new ChunkPos(packed);
+                if (serverLevel.getChunkSource().getChunkNow(chunk.x, chunk.z) == null) {
+                    return false;
+                }
+            }
+        }
         Baritone engine = baritoneEngine();
         applyPathingSettings();
         engine.getCustomGoalProcess().setGoalAndPath(new GoalBlock(destination));
+        return true;
     }
 
     private void applyPathingSettings() {
@@ -730,6 +776,19 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         return ticketsConfirmed ? workerTicketChunks.size() : 0;
     }
 
+    public int searchTicketCount() {
+        return searchTicketChunks.size();
+    }
+
+    public int totalTicketCount() {
+        return workerTicketChunks.size() + searchTicketChunks.size();
+    }
+
+    /** Server-thread source set for immutable path-calculation snapshots. */
+    public Set<Long> pathingTicketChunks() {
+        return Set.copyOf(workerTicketChunks);
+    }
+
     public int inventoryUsedSlots() {
         int used = 0;
         for (int slot = 0; slot < getContainerSize(); slot++) {
@@ -768,6 +827,24 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         return workerController.chunksExamined();
     }
 
+    public int chunksScanned() { return workerController.chunksScanned(); }
+    public int positionsExamined() { return workerController.positionsExamined(); }
+    public int matchingBlocks() { return workerController.matchingBlocks(); }
+    public int candidatesFound() { return workerController.candidatesFound(); }
+    public int candidatesRejectedByPolicy() { return workerController.candidatesRejectedByPolicy(); }
+    public int candidatesRejectedAsUnreachable() { return workerController.candidatesRejectedAsUnreachable(); }
+    public int cachedCandidateCount() { return workerController.cachedCandidateCount(); }
+    public int frontierIndex() { return workerController.frontierIndex(); }
+    public int frontierSize() { return workerController.frontierSize(); }
+    public boolean waitingForSearchChunk() { return workerController.waitingForSearchChunk(); }
+    public boolean pathRequested() { return workerController.pathRequested(); }
+    public Optional<BlockPos> lastNavigationDestination() {
+        return workerController.lastNavigationDestination();
+    }
+    public String lastScannedChunk() { return workerController.lastScannedChunk(); }
+    public String requestedSearchChunk() { return workerController.requestedSearchChunk(); }
+    public long maxSearchTickNanos() { return workerController.maxSearchTickNanos(); }
+
     public int currentPathNode() {
         if (baritoneEngine == null || baritoneEngine.getPathingBehavior().getCurrent() == null) return 0;
         return baritoneEngine.getPathingBehavior().getCurrent().getPosition();
@@ -776,6 +853,25 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     public int currentPathLength() {
         if (baritoneEngine == null || baritoneEngine.getPathingBehavior().getCurrent() == null) return 0;
         return baritoneEngine.getPathingBehavior().getCurrent().getPath().length();
+    }
+
+    public double currentPathCost() {
+        if (baritoneEngine == null || baritoneEngine.getPathingBehavior().getCurrent() == null) return 0.0D;
+        var current = baritoneEngine.getPathingBehavior().getCurrent();
+        return current.getPath().ticksRemainingFrom(Math.max(0, current.getPosition()));
+    }
+
+    public String currentPathSample() {
+        if (baritoneEngine == null || baritoneEngine.getPathingBehavior().getCurrent() == null) return "";
+        var positions = baritoneEngine.getPathingBehavior().getCurrent().getPath().positions();
+        int end = Math.min(positions.size(), 12);
+        return positions.subList(0, end).toString();
+    }
+
+    public PathingStatus pathingStatus() {
+        return baritoneEngine == null
+                ? PathingStatus.IDLE
+                : baritoneEngine.getPathingBehavior().getStatus();
     }
 
     /**
@@ -1020,6 +1116,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             // A dimension transfer invalidates the EntityContext and every
             // world-backed path calculation.  Dispose first while the old
             // level still owns the entity's tickets and break animation.
+            if (workerController != null) {
+                workerController.resetTransientState();
+            }
             disposeBaritoneEngine();
             releaseWorkerTickets();
         }
@@ -1076,25 +1175,48 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
         workerTicketChunks.clear();
         ticketsConfirmed = false;
+        releaseSearchTickets();
+    }
+
+    public boolean requestSearchTicket(ChunkPos chunk) {
+        if (!(level() instanceof ServerLevel serverLevel)) return false;
+        long packed = chunk.toLong();
+        if (searchTicketChunks.contains(packed)) return true;
+        if (workerTicketChunks.size() + searchTicketChunks.size() >= MAX_WORKER_TICKETS) {
+            return false;
+        }
+        boolean added = BaritoneHelper.SEARCH_TICKETS.forceChunk(
+                serverLevel, getUUID(), chunk.x, chunk.z, true, true);
+        if (added) searchTicketChunks.add(packed);
+        return added;
+    }
+
+    public void releaseSearchTicket(ChunkPos chunk) {
+        if (!(level() instanceof ServerLevel serverLevel)) return;
+        long packed = chunk.toLong();
+        if (searchTicketChunks.remove(packed)) {
+            BaritoneHelper.SEARCH_TICKETS.forceChunk(
+                    serverLevel, getUUID(), chunk.x, chunk.z, false, true);
+        }
+    }
+
+    private void releaseSearchTickets() {
+        if (level() instanceof ServerLevel serverLevel) {
+            for (long packed : Set.copyOf(searchTicketChunks)) {
+                ChunkPos chunk = new ChunkPos(packed);
+                BaritoneHelper.SEARCH_TICKETS.forceChunk(
+                        serverLevel, getUUID(), chunk.x, chunk.z, false, true);
+            }
+        }
+        searchTicketChunks.clear();
     }
 
     private Set<Long> desiredTicketChunks() {
         Set<Long> desired = new LinkedHashSet<>();
         ChunkPos current = chunkPosition();
-        for (int x = current.x - 1; x <= current.x + 1; x++) {
-            for (int z = current.z - 1; z <= current.z + 1; z++) {
-                desired.add(ChunkPos.asLong(x, z));
-            }
-        }
-
-        if (job.activelyWorks()) {
-            desired.add(new ChunkPos(jobOrigin).toLong());
-        }
-        if (job == WorkerJob.DEPOSIT
-                && storagePosition != null
-                && storageIsIn((ServerLevel) level())) {
-            desired.add(new ChunkPos(storagePosition).toLong());
-        }
+        // Insertion order is priority order when the bounded set is trimmed.
+        // The worker chunk can never be displaced by frontier or endpoint hints.
+        desired.add(current.toLong());
         workerController.currentTarget().ifPresent(target ->
                 desired.add(new ChunkPos(target).toLong()));
         workerController.currentWorkPosition().ifPresent(target ->
@@ -1109,13 +1231,43 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 desired.add(new ChunkPos(position.x, position.z).toLong());
             }
         }
-        // Keep the entity-owned ticket footprint bounded even with a large
-        // work area and a stale persisted target.  The first entries are the
-        // worker/route-critical 3x3 window; extras are frontier hints.
-        if (desired.size() > MAX_WORKER_TICKETS) {
-            return new java.util.LinkedHashSet<>(desired.stream().limit(MAX_WORKER_TICKETS).toList());
+        if (job.activelyWorks()) {
+            addRouteChunks(desired, current, workerController.currentWorkPosition().orElse(null));
+        }
+        for (int x = current.x - 1; x <= current.x + 1; x++) {
+            for (int z = current.z - 1; z <= current.z + 1; z++) {
+                desired.add(ChunkPos.asLong(x, z));
+            }
+        }
+        if (job.activelyWorks()) {
+            desired.add(new ChunkPos(jobOrigin).toLong());
+        }
+        if (job == WorkerJob.DEPOSIT
+                && storagePosition != null
+                && storageIsIn((ServerLevel) level())) {
+            desired.add(new ChunkPos(storagePosition).toLong());
+        }
+        // Keep the entity-owned footprint bounded; everything before this
+        // point is explicitly ordered by route importance.
+        int workerTicketBudget = Math.max(0, MAX_WORKER_TICKETS - searchTicketChunks.size());
+        if (desired.size() > workerTicketBudget) {
+            return new java.util.LinkedHashSet<>(desired.stream().limit(workerTicketBudget).toList());
         }
         return desired;
+    }
+
+    /** Keep the bounded ticket window connected to the current Baritone goal. */
+    private void addRouteChunks(Set<Long> desired, ChunkPos start, @Nullable BlockPos destination) {
+        if (destination == null) return;
+        ChunkPos end = new ChunkPos(destination);
+        int dx = end.x - start.x;
+        int dz = end.z - start.z;
+        int steps = Math.max(Math.abs(dx), Math.abs(dz));
+        for (int step = 1; step < steps && step <= 6; step++) {
+            int x = start.x + Math.round(dx * step / (float) steps);
+            int z = start.z + Math.round(dz * step / (float) steps);
+            desired.add(ChunkPos.asLong(x, z));
+        }
     }
 
     private void setTicket(ServerLevel level, long packedChunk, boolean add) {

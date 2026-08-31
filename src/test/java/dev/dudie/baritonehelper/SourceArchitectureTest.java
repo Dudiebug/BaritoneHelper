@@ -17,7 +17,7 @@ class SourceArchitectureTest {
         try (var stream = Files.walk(sourceRoot)) {
             source = stream
                     .filter(path -> path.toString().endsWith(".java"))
-                    .filter(path -> !path.toString().contains("/gametest/"))
+                    .filter(path -> !path.toString().replace('\\', '/').contains("/gametest/"))
                     .map(path -> {
                         try {
                             return Files.readString(path);

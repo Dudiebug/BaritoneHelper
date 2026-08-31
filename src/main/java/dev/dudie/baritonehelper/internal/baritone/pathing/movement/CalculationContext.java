@@ -101,7 +101,9 @@ public class CalculationContext {
       this.player = entity instanceof IInventoryProvider ? (IInventoryProvider)entity : null;
       this.world = baritone.getEntityContext().world();
       this.worldData = (WorldData)baritone.getWorldProvider().getCurrentWorld();
-      this.bsi = new BlockStateInterface(this.world);
+      this.bsi = forUseOnAnotherThread
+         ? BlockStateInterface.threadSafe(baritone.getEntityContext())
+         : new BlockStateInterface(this.world);
       this.toolSet = this.player == null ? null : new ToolSet(entity);
       this.hasThrowaway = baritone.settings().allowPlace.get() && ((Baritone)baritone).getInventoryBehavior().hasGenericThrowaway();
       this.hasWaterBucket = this.player != null
