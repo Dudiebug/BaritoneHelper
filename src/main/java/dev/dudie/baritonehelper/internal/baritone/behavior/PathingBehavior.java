@@ -20,6 +20,7 @@ package dev.dudie.baritonehelper.internal.baritone.behavior;
 import dev.dudie.baritonehelper.internal.baritone.InternalBaritoneRuntime;
 import dev.dudie.baritonehelper.internal.baritone.Baritone;
 import dev.dudie.baritonehelper.internal.baritone.api.behavior.IPathingBehavior;
+import dev.dudie.baritonehelper.internal.baritone.api.behavior.PathingStatus;
 import dev.dudie.baritonehelper.internal.baritone.api.event.events.PathEvent;
 import dev.dudie.baritonehelper.internal.baritone.api.pathing.calc.IPath;
 import dev.dudie.baritonehelper.internal.baritone.api.pathing.goals.Goal;
@@ -61,6 +62,8 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    private final Object pathPlanLock = new Object();
    private BetterBlockPos expectedSegmentStart;
    private final LinkedBlockingQueue<PathEvent> toDispatch = new LinkedBlockingQueue<>();
+   private volatile PathingStatus status = PathingStatus.IDLE;
+   private long calculationGeneration;
 
    public PathingBehavior(Baritone baritone) {
       super(baritone);
@@ -76,6 +79,26 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
       this.calcFailedLastTick = curr.contains(PathEvent.CALC_FAILED);
 
       for (PathEvent event : curr) {
+         switch (event) {
+            case CALC_STARTED, NEXT_SEGMENT_CALC_STARTED -> this.status = PathingStatus.CALCULATING;
+            case CALC_FINISHED_NOW_EXECUTING, NEXT_SEGMENT_CALC_FINISHED,
+               CONTINUING_ONTO_PLANNED_NEXT, SPLICING_ONTO_NEXT_EARLY -> this.status = PathingStatus.PATH_FOUND;
+            case CALC_FAILED -> this.status = PathingStatus.NO_PATH;
+            case NEXT_CALC_FAILED -> {
+               // A failed lookahead does not invalidate the segment that is
+               // already executing. The next tick can plan again from its end.
+               if (this.current != null) {
+                  this.status = PathingStatus.EXECUTING;
+               }
+            }
+            case AT_GOAL -> this.status = PathingStatus.ARRIVED;
+            case CANCELED -> {
+               if (this.status != PathingStatus.NO_PATH && this.status != PathingStatus.FAILED) {
+                  this.status = PathingStatus.CANCELLED;
+               }
+            }
+            default -> { }
+         }
          this.baritone.getGameEventHandler().onPathEvent(event);
       }
    }
@@ -131,6 +154,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
             }
 
             if (this.current != null) {
+               this.status = PathingStatus.EXECUTING;
                this.safeToCancel = this.current.onTick();
                if (this.current.failed() || this.current.finished()) {
                   this.current = null;
@@ -275,6 +299,11 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
       return this.current == null || this.safeToCancel;
    }
 
+   @Override
+   public PathingStatus getStatus() {
+      return this.status;
+   }
+
    public void requestPause() {
       this.pauseRequestedLastTick = true;
    }
@@ -305,7 +334,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
 
    public void softCancelIfSafe() {
       synchronized (this.pathPlanLock) {
-         this.getInProgress().ifPresent(AbstractNodeCostSearch::cancel);
+         this.invalidateCalculation();
          if (!this.isSafeToCancel()) {
             return;
          }
@@ -315,18 +344,20 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
       }
 
       this.cancelRequested = true;
+      this.status = PathingStatus.CANCELLED;
    }
 
    private void secretInternalSegmentCancel() {
+      if (this.status != PathingStatus.NO_PATH && this.status != PathingStatus.FAILED) {
+         this.status = PathingStatus.CANCELLED;
+      }
       this.queuePathEvent(PathEvent.CANCELED);
       synchronized (this.pathPlanLock) {
-         this.getInProgress().ifPresent(AbstractNodeCostSearch::cancel);
-         if (this.current != null) {
-            this.current = null;
-            this.next = null;
-            this.baritone.getInputOverrideHandler().clearAllKeys();
-            this.baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
-         }
+         this.invalidateCalculation();
+         this.current = null;
+         this.next = null;
+         this.baritone.getInputOverrideHandler().clearAllKeys();
+         this.baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
       }
    }
 
@@ -334,8 +365,17 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    public void forceCancel() {
       this.cancelEverything();
       this.secretInternalSegmentCancel();
+      this.status = PathingStatus.CANCELLED;
+   }
+
+   /** Invalidates callbacks before dropping the active calculation reference. */
+   private void invalidateCalculation() {
       synchronized (this.pathCalcLock) {
-         this.inProgress = null;
+         this.calculationGeneration++;
+         if (this.inProgress != null) {
+            this.inProgress.cancel();
+            this.inProgress = null;
+         }
       }
    }
 
@@ -446,6 +486,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
             }
 
             this.inProgress = pathfinder;
+            long generation = ++this.calculationGeneration;
             InternalBaritoneRuntime.getExecutor()
                .execute(
                   () -> {
@@ -455,10 +496,21 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
 
                      PathCalculationResult calcResult = pathfinder.calculate(primaryTimeout, failureTimeout);
                      synchronized (this.pathPlanLock) {
+                        synchronized (this.pathCalcLock) {
+                           if (this.inProgress != pathfinder
+                              || this.calculationGeneration != generation
+                              || !Objects.equals(this.goal, goal)) {
+                              return;
+                           }
+                           this.inProgress = null;
+                        }
+                        if (calcResult.getType() == PathCalculationResult.Type.EXCEPTION) {
+                           this.status = PathingStatus.FAILED;
+                        }
                         Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(this, p));
                         if (this.current == null) {
                            if (executor.isPresent()) {
-                              if (executor.get().getPath().positions().contains(this.expectedSegmentStart)) {
+                              if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
                                  this.queuePathEvent(PathEvent.CALC_FINISHED_NOW_EXECUTING);
                                  this.current = executor.get();
                                  this.resetEstimatedTicksToGoal(start);
@@ -471,7 +523,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
                            }
                         } else if (this.next == null) {
                            if (executor.isPresent()) {
-                              if (executor.get().getPath().getSrc().equals(this.current.getPath().getDest())) {
+                              if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
                                  this.queuePathEvent(PathEvent.NEXT_SEGMENT_CALC_FINISHED);
                                  this.next = executor.get();
                               } else {
@@ -506,10 +558,6 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
                                     + " nodes considered"
                               );
                            }
-                        }
-
-                        synchronized (this.pathCalcLock) {
-                           this.inProgress = null;
                         }
                      }
                   }

@@ -24,7 +24,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 /** Registration and validation boundary for the dashboard protocol. */
 @EventBusSubscriber(modid = BaritoneHelper.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class WorkerNetwork {
-    private static final String PROTOCOL = "2";
+    private static final String PROTOCOL = "3";
 
     private WorkerNetwork() {}
 

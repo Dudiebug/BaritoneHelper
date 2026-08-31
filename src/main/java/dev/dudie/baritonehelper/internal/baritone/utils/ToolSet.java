@@ -20,8 +20,11 @@ package dev.dudie.baritonehelper.internal.baritone.utils;
 import dev.dudie.baritonehelper.internal.baritone.api.IBaritone;
 import dev.dudie.baritonehelper.internal.baritone.BaritoneEntity;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.IInventoryProvider;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 import dev.dudie.baritonehelper.internal.baritone.InternalEnchantmentUtils;
@@ -40,16 +43,30 @@ import net.minecraft.world.level.block.state.BlockState;
 public class ToolSet {
    private final Map<Block, Double> breakStrengthCache = new HashMap<>();
    private final Function<Block, Double> backendCalculation;
-   private final LivingEntity player;
-   private final IBaritone baritone;
+   private final List<ItemStack> hotbar;
+   private final int selectedSlot;
+   private final boolean disableAutoTool;
+   private final boolean useSwordToMine;
+   private final boolean itemSaver;
+   private final Set<Block> blocksToAvoidBreaking;
 
    public ToolSet(LivingEntity player) {
-      this.player = player;
-      this.baritone = player instanceof BaritoneEntity holder
+      IBaritone baritone = player instanceof BaritoneEntity holder
          ? holder.baritoneEngine()
          : throwMissingEngine(player);
-      if (this.baritone.settings().considerPotionEffects.get()) {
-         double amplifier = this.potionAmplifier();
+      IInventoryProvider inventoryProvider = (IInventoryProvider)player;
+      this.selectedSlot = inventoryProvider.getLivingInventory().selectedSlot;
+      List<ItemStack> hotbarCopy = new ArrayList<>(9);
+      for (int index = 0; index < 9; index++) {
+         hotbarCopy.add(inventoryProvider.getLivingInventory().getItem(index).copy());
+      }
+      this.hotbar = List.copyOf(hotbarCopy);
+      this.disableAutoTool = baritone.settings().disableAutoTool.get();
+      this.useSwordToMine = baritone.settings().useSwordToMine.get();
+      this.itemSaver = baritone.settings().itemSaver.get();
+      this.blocksToAvoidBreaking = Set.copyOf(baritone.settings().blocksToAvoidBreaking.get());
+      if (baritone.settings().considerPotionEffects.get()) {
+         double amplifier = potionAmplifier(player);
          Function<Double, Double> amplify = x -> amplifier * x;
          this.backendCalculation = amplify.compose(this::getBestDestructionTime);
       } else {
@@ -79,9 +96,9 @@ public class ToolSet {
 
    public int getBestSlot(Block b, boolean preferSilkTouch, boolean pathingCalculation) {
       if (b.defaultBlockState().getBlock().defaultDestroyTime() == 0.0F) {
-         return ((IInventoryProvider)this.player).getLivingInventory().selectedSlot;
-      } else if (this.baritone.settings().disableAutoTool.get() && pathingCalculation) {
-         return ((IInventoryProvider)this.player).getLivingInventory().selectedSlot;
+         return this.selectedSlot;
+      } else if (this.disableAutoTool && pathingCalculation) {
+         return this.selectedSlot;
       } else {
          int best = 0;
          double highestSpeed = Double.NEGATIVE_INFINITY;
@@ -90,9 +107,9 @@ public class ToolSet {
          BlockState blockState = b.defaultBlockState();
 
          for (int i = 0; i < 9; i++) {
-            ItemStack itemStack = ((IInventoryProvider)this.player).getLivingInventory().getItem(i);
-            if ((this.baritone.settings().useSwordToMine.get() || !(itemStack.getItem() instanceof SwordItem))
-               && (!this.baritone.settings().itemSaver.get() || itemStack.getDamageValue() < itemStack.getMaxDamage() || itemStack.getMaxDamage() <= 1)) {
+            ItemStack itemStack = this.hotbar.get(i);
+            if ((this.useSwordToMine || !(itemStack.getItem() instanceof SwordItem))
+               && (!this.itemSaver || itemStack.getDamageValue() < itemStack.getMaxDamage() || itemStack.getMaxDamage() <= 1)) {
                double speed = calculateSpeedVsBlock(itemStack, blockState);
                boolean silkTouch = this.hasSilkTouch(itemStack);
                if (speed > highestSpeed) {
@@ -117,12 +134,12 @@ public class ToolSet {
    }
 
    private double getBestDestructionTime(Block b) {
-      ItemStack stack = ((IInventoryProvider)this.player).getLivingInventory().getItem(this.getBestSlot(b, false, true));
+      ItemStack stack = this.hotbar.get(this.getBestSlot(b, false, true));
       return calculateSpeedVsBlock(stack, b.defaultBlockState()) * this.avoidanceMultiplier(b);
    }
 
    private double avoidanceMultiplier(Block b) {
-      return this.baritone.settings().blocksToAvoidBreaking.get().contains(b.builtInRegistryHolder().value()) ? 0.1 : 1.0;
+      return this.blocksToAvoidBreaking.contains(b.builtInRegistryHolder().value()) ? 0.1 : 1.0;
    }
 
    public static double calculateSpeedVsBlock(ItemStack item, BlockState state) {
@@ -143,14 +160,14 @@ public class ToolSet {
       }
    }
 
-   private double potionAmplifier() {
+   private static double potionAmplifier(LivingEntity player) {
       double speed = 1.0;
-      MobEffectInstance hasteEffect = this.player.getEffect(MobEffects.DIG_SPEED);
+      MobEffectInstance hasteEffect = player.getEffect(MobEffects.DIG_SPEED);
       if (hasteEffect != null) {
          speed *= 1.0 + (hasteEffect.getAmplifier() + 1) * 0.2;
       }
 
-      MobEffectInstance fatigueEffect = this.player.getEffect(MobEffects.DIG_SLOWDOWN);
+      MobEffectInstance fatigueEffect = player.getEffect(MobEffects.DIG_SLOWDOWN);
       if (fatigueEffect != null) {
          switch (fatigueEffect.getAmplifier()) {
             case 0:

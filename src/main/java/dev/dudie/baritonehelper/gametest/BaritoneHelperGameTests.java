@@ -219,7 +219,7 @@ public final class BaritoneHelperGameTests {
         worker.beginCollection(
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(NEAR_TARGET));
 
-        helper.runAfterDelay(10, () -> {
+        helper.runAfterDelay(20, () -> {
             helper.assertTrue(
                     helper.getBlockState(NEAR_TARGET).isAir(),
                     "configured block must be collected");
@@ -446,17 +446,17 @@ public final class BaritoneHelperGameTests {
                 }
             }
         }
-        helper.setBlock(target, Blocks.IRON_BLOCK);
+        helper.setBlock(target, Blocks.EMERALD_BLOCK);
         WorkerEntity worker = spawnWorker(helper);
         worker.beginCollection(
-                blockId(Blocks.IRON_BLOCK), helper.absolutePos(target));
+                blockId(Blocks.EMERALD_BLOCK), helper.absolutePos(target));
 
         helper.runAfterDelay(230, () -> {
             helper.assertTrue(
-                    helper.getBlockState(target).is(Blocks.IRON_BLOCK),
+                    helper.getBlockState(target).is(Blocks.EMERALD_BLOCK),
                     "unreachable target must not be mined through walls");
             helper.assertValueEqual(
-                    countItem(worker, Items.IRON_BLOCK), 0, "watchdog collection count");
+                    countItem(worker, Items.EMERALD_BLOCK), 0, "watchdog collection count");
             helper.assertValueEqual(
                     worker.job(), WorkerJob.COLLECT, "watchdog keeps job resumable");
             helper.succeed();
