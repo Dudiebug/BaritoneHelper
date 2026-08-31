@@ -386,6 +386,7 @@ public final class WorkerController {
     }
 
     private void clearPlan(boolean clearRejected) {
+        if (searchCursor != null) searchCursor.reprioritize(worker.blockPosition());
         currentTarget = null;
         currentWorkPosition = null;
         pathRequested = false;

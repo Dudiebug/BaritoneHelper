@@ -68,6 +68,7 @@ class V2ArchitectureContractTest {
         assertTrue(planner.contains("primeSearchTickets"));
         assertTrue(planner.contains("MAX_SEARCH_TICKETS = 4"));
         assertTrue(planner.contains("MAX_CACHED_CANDIDATES = 32"));
+        assertTrue(planner.contains("reprioritize(BlockPos workerPosition)"));
         assertTrue(planner.contains("work.getX() + 0.5"));
         assertTrue(planner.contains("work.getY() + worker.getEyeHeight()"));
         assertFalse(planner.contains("getEyePosition()"));

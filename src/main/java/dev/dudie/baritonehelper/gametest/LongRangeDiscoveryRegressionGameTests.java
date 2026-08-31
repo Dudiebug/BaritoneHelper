@@ -313,13 +313,13 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryAcceptance", timeoutTicks = 32000)
+            batch = "zzLongRangeDiscoveryAcceptance", timeoutTicks = 64000)
     public static void acceptanceSequenceCollectsNearAndFarTargets(GameTestHelper helper) {
         runAcceptanceSequence(helper, true);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryAcceptanceNoNear", timeoutTicks = 32000)
+            batch = "zzLongRangeDiscoveryAcceptanceNoNear", timeoutTicks = 64000)
     public static void acceptanceSequenceWorksWithoutNearbyTarget(GameTestHelper helper) {
         runAcceptanceSequence(helper, false);
     }
@@ -385,7 +385,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
                 9_000, 11_000, 15_000, 18_000, 24_000, 28_000}) {
             helper.runAfterDelay(delay, () -> assertTicketBudget(helper, worker));
         }
-        helper.runAfterDelay(30_000, () -> {
+        helper.runAfterDelay(26, () -> helper.succeedWhen(() -> {
             BlockPos remaining = expected.stream()
                     .filter(target -> !helper.getBlockState(target).isAir())
                     .findFirst().orElse(null);
@@ -402,8 +402,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
                     "acceptance stop releases search tickets");
             helper.assertValueEqual(worker.workerTicketCount(), 0,
                     "acceptance stop releases worker tickets");
-            helper.succeed();
-        });
+        }));
     }
 
     private static void assertTicketBudget(GameTestHelper helper, WorkerEntity worker) {

@@ -223,6 +223,13 @@ public final class WorkerPlanner {
         public String requestedChunk() { return requestedChunk == null ? "" : requestedChunk.toString(); }
         public boolean exhausted() { return exhausted; }
 
+        public void reprioritize(BlockPos workerPosition) {
+            int firstUnreserved = Math.min(frontier.size(),
+                    frontierIndex + (requestedChunk == null ? 0 : 1));
+            frontier.subList(firstUnreserved, frontier.size())
+                    .sort(frontierPriority(workerPosition));
+        }
+
         public void close(WorkerEntity worker) {
             for (long packed : Set.copyOf(searchTicketChunks)) {
                 worker.releaseSearchTicket(new net.minecraft.world.level.ChunkPos(packed));
@@ -384,14 +391,19 @@ public final class WorkerPlanner {
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) result.add(new net.minecraft.world.level.ChunkPos(x, z));
         }
+        result.sort(frontierPriority(workerPosition));
+        return result;
+    }
+
+    private static Comparator<net.minecraft.world.level.ChunkPos> frontierPriority(
+            BlockPos workerPosition) {
         long workerChunkX = Math.floorDiv(workerPosition.getX(), 16);
         long workerChunkZ = Math.floorDiv(workerPosition.getZ(), 16);
-        result.sort(Comparator.<net.minecraft.world.level.ChunkPos>comparingLong(pos -> {
+        return Comparator.<net.minecraft.world.level.ChunkPos>comparingLong(pos -> {
             long workerDx = pos.x - workerChunkX;
             long workerDz = pos.z - workerChunkZ;
             return workerDx * workerDx + workerDz * workerDz;
-        }).thenComparingInt(pos -> pos.x).thenComparingInt(pos -> pos.z));
-        return result;
+        }).thenComparingInt(pos -> pos.x).thenComparingInt(pos -> pos.z);
     }
 
     /** Compatibility helper for small callers; production code uses SearchCursor. */
