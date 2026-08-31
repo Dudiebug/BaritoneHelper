@@ -74,6 +74,7 @@ class V2ArchitectureContractTest {
         assertTrue(worker.contains("SEARCH_TICKETS.forceChunk"));
         assertTrue(worker.contains("workerController.resetTransientState()"));
         assertTrue(controller.contains("PathingStatus.NO_PATH"));
+        assertTrue(controller.contains("worker.pathingStatus() == PathingStatus.CALCULATING"));
         assertTrue(calculation.contains("BlockStateInterface.threadSafe"));
         assertTrue(blockState.contains("getStates().copy()"));
         assertFalse(blockState.contains("getVisibleChunkIfPresent"));

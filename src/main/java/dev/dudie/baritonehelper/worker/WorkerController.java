@@ -352,6 +352,13 @@ public final class WorkerController {
     }
 
     private void watchProgress(double distance, WorkerBlockReason terminalReason) {
+        if (pathRequested && worker.pathingStatus() == PathingStatus.CALCULATING) {
+            // GameTest and busy servers can advance many ticks while the
+            // asynchronous pathfinder is still working in wall-clock time.
+            // Only watchdog an executing route, not a valid calculation.
+            watchdogTicks = 0;
+            return;
+        }
         if (distance + 0.04 < bestDistance) {
             bestDistance = distance;
             watchdogTicks = 0;

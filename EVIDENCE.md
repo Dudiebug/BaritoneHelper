@@ -62,8 +62,8 @@ published unless all commands pass and the artifact/version checks succeed.
 
 The final release-gate run on 2026-08-30 passed all 15 JUnit tests, all 35
 required NeoForge GameTests, and the Java 21 build. The two exact 128-block
-acceptance runs measured maximum 4,096-position search slices of 15.9953 ms and
-10.02 ms; every measured slice remained below the enforced 50 ms ceiling. The
+acceptance runs measured maximum 4,096-position search slices of 6.3347 ms and
+34.6578 ms; every measured slice remained below the enforced 50 ms ceiling. The
 build produced `build/libs/baritonehelper-2.0.0.jar` (559,561 bytes) and
 `build/libs/baritonehelper-2.0.0-sources.jar` (312,778 bytes); the embedded
 metadata reports version 2.0.0 and license `MIT AND LGPL-3.0-or-later`.
