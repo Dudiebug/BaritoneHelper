@@ -17,6 +17,8 @@ public final class WorkerJobConfiguration {
     public static final int MAX_HORIZONTAL_RADIUS = 512;
     public static final int MIN_VERTICAL_RADIUS = 4;
     public static final int MAX_VERTICAL_RADIUS = 128;
+    public static final int DEFAULT_HORIZONTAL_RADIUS = MAX_HORIZONTAL_RADIUS;
+    public static final int DEFAULT_VERTICAL_RADIUS = MAX_VERTICAL_RADIUS;
     public static final int MIN_REQUESTED_COUNT = 1;
     public static final int MAX_REQUESTED_COUNT = 1_000_000;
 
@@ -26,8 +28,8 @@ public final class WorkerJobConfiguration {
     private int completedBlockCount;
     private String workAreaDimension = "";
     private BlockPos workAreaCenter = BlockPos.ZERO;
-    private int horizontalSearchRadius = 64;
-    private int verticalSearchRadius = 32;
+    private int horizontalSearchRadius = DEFAULT_HORIZONTAL_RADIUS;
+    private int verticalSearchRadius = DEFAULT_VERTICAL_RADIUS;
     private String storageDimension = "";
     private BlockPos storagePosition;
     private final Set<ResourceLocation> exclusions = new LinkedHashSet<>();
@@ -158,9 +160,9 @@ public final class WorkerJobConfiguration {
         if (workAreaDimension.isBlank()) workAreaDimension = fallbackDimension == null ? "" : fallbackDimension;
         workAreaCenter = tag.contains("WorkAreaCenter", Tag.TAG_LONG) ? BlockPos.of(tag.getLong("WorkAreaCenter")) : fallbackOrigin;
         horizontalSearchRadius = Math.max(MIN_HORIZONTAL_RADIUS, Math.min(MAX_HORIZONTAL_RADIUS,
-                tag.contains("HorizontalSearchRadius") ? tag.getInt("HorizontalSearchRadius") : 64));
+                tag.contains("HorizontalSearchRadius") ? tag.getInt("HorizontalSearchRadius") : DEFAULT_HORIZONTAL_RADIUS));
         verticalSearchRadius = Math.max(MIN_VERTICAL_RADIUS, Math.min(MAX_VERTICAL_RADIUS,
-                tag.contains("VerticalSearchRadius") ? tag.getInt("VerticalSearchRadius") : 32));
+                tag.contains("VerticalSearchRadius") ? tag.getInt("VerticalSearchRadius") : DEFAULT_VERTICAL_RADIUS));
         storageDimension = tag.getString("StorageDimension");
         storagePosition = tag.contains("StoragePosition", Tag.TAG_LONG) ? BlockPos.of(tag.getLong("StoragePosition")) : null;
         revision = Math.max(0, tag.getInt("ConfigurationRevision"));

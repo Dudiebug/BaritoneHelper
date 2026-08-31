@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0 - 2026-08-30
+
+- New workers now default to the maximum supported search area: 512 blocks
+  horizontally and 128 blocks vertically.
+
 ## 2.0.0 - 2026-08-30
 
 - Replaced vanilla worker navigation with a relocated server-side

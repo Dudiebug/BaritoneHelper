@@ -156,7 +156,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.EFFICIENCY),
                 5);
         items.set(0, starterPickaxe);
-        configuration.setWorkArea(level.dimension().location().toString(), blockPosition(), 64, 32);
+        configuration.setWorkArea(level.dimension().location().toString(), blockPosition(),
+                WorkerJobConfiguration.DEFAULT_HORIZONTAL_RADIUS,
+                WorkerJobConfiguration.DEFAULT_VERTICAL_RADIUS);
     }
 
     /** Lazily creates the single server-side engine owned by this entity. */
@@ -1577,7 +1579,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             // destructive work automatically.  The legacy WorkerJob value is
             // kept for old integrations; runtimeState is authoritative v2 UI.
             configuration.setWorkArea(
-                    level().dimension().location().toString(), jobOrigin, 64, 32);
+                    level().dimension().location().toString(), jobOrigin,
+                    WorkerJobConfiguration.DEFAULT_HORIZONTAL_RADIUS,
+                    WorkerJobConfiguration.DEFAULT_VERTICAL_RADIUS);
             configuration.setRequestedAmount(64, true);
             if (targetBlockId != null) configuration.setTarget(
                     targetBlockId, jobOrigin, level().dimension().location().toString());

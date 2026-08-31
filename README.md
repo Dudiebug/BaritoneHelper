@@ -58,8 +58,9 @@ scan. Frontier chunks inside the configured area are requested, observed until
 loaded, scanned with a 4,096-position per-worker tick budget, and released.
 Candidate interaction stances use hypothetical eye position, reach, support,
 collision, and line of sight; the worker does not need to see the resource from
-its current position before considering it. Work areas default to 64 horizontal
-/ 32 vertical blocks and are limited to 8–512 / 4–128. No-work zones support
+its current position before considering it. Work areas default to the maximum
+512 horizontal / 128 vertical blocks and are limited to 8–512 / 4–128. No-work
+zones support
 `NO_MODIFY` (walk-through only) and `NO_ENTER` (path-forbidden) modes and are
 enforced by scanning, path costs, interaction, placement, pickup, and storage
 validation.
