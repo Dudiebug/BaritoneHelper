@@ -3,8 +3,11 @@ package dev.dudie.baritonehelper.item;
 import dev.dudie.baritonehelper.ActiveWorkerData;
 import dev.dudie.baritonehelper.BaritoneHelper;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.worker.PickupState;
+import dev.dudie.baritonehelper.worker.WorkerPickupService;
 import dev.dudie.baritonehelper.worker.WorkerMessages;
 import java.util.Optional;
+import java.util.UUID;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
@@ -92,20 +95,19 @@ public final class WorkerControllerItem extends Item {
                     "message.baritonehelper.no_worker");
             return InteractionResultHolder.fail(stack);
         }
-        if (worker.level() != level) {
-            WorkerMessages.send(
-                    serverPlayer,
-                    ChatFormatting.RED,
-                    "message.baritonehelper.other_dimension");
-            return InteractionResultHolder.fail(stack);
-        }
-
         worker.openDashboard(serverPlayer);
         return InteractionResultHolder.consume(stack);
     }
 
     public static Optional<WorkerEntity> findOwnedWorker(ServerPlayer player) {
         ActiveWorkerData active = player.getData(BaritoneHelper.ACTIVE_WORKER);
+
+        if (active.pickupState() != PickupState.LIVE) {
+            WorkerEntity pending = resolveRecordedWorker(player, active);
+            if (WorkerPickupService.reconcile(player, pending)) return Optional.empty();
+            if (active.pickupState() != PickupState.LIVE) return Optional.empty();
+            if (pending != null) return Optional.of(pending);
+        }
 
         WorkerEntity recorded = resolveRecordedWorker(player, active);
         if (recorded != null) {
@@ -129,6 +131,20 @@ public final class WorkerControllerItem extends Item {
         return Optional.empty();
     }
 
+    /** Resolves one authoritative protocol-v4 identity, loading only its recorded chunk. */
+    public static Optional<WorkerEntity> findOwnedWorker(
+            ServerPlayer player, UUID workerUuid, String dimension) {
+        ActiveWorkerData active = player.getData(BaritoneHelper.ACTIVE_WORKER);
+        if (!active.matches(workerUuid, dimension)) return Optional.empty();
+        if (active.pickupState() != PickupState.LIVE) {
+            WorkerEntity pending = resolveRecordedWorker(player, active);
+            if (WorkerPickupService.reconcile(player, pending)) return Optional.empty();
+            if (active.pickupState() != PickupState.LIVE) return Optional.empty();
+            if (pending != null) return Optional.of(pending);
+        }
+        return Optional.ofNullable(resolveRecordedWorker(player, active));
+    }
+
     private static WorkerEntity resolveRecordedWorker(
             ServerPlayer player,
             ActiveWorkerData active) {
@@ -138,14 +154,14 @@ public final class WorkerControllerItem extends Item {
 
         ResourceLocation dimensionId = ResourceLocation.tryParse(active.dimension());
         if (dimensionId == null) {
-            active.clear();
+            if (active.pickupState() == PickupState.LIVE) active.clear();
             return null;
         }
 
         ServerLevel level = player.getServer().getLevel(
                 ResourceKey.create(Registries.DIMENSION, dimensionId));
         if (level == null) {
-            active.clear();
+            if (active.pickupState() == PickupState.LIVE) active.clear();
             return null;
         }
 
@@ -153,14 +169,16 @@ public final class WorkerControllerItem extends Item {
         var entity = level.getEntity(active.uuid().orElseThrow());
         if (entity instanceof WorkerEntity worker
                 && player.getUUID().equals(worker.getOwnerUUID())) {
-            active.set(
+            active.updateLocation(
                     worker.getUUID(),
                     level.dimension().location().toString(),
                     worker.blockPosition());
             return worker;
         }
 
-        active.clear();
+        if (active.pickupState() == dev.dudie.baritonehelper.worker.PickupState.LIVE) {
+            active.clear();
+        }
         return null;
     }
 }
