@@ -43,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 
 public final class Settings {
    public final Settings.Setting<Boolean> allowBreak = new Settings.Setting<>(true);
+   /** Blocks that a process may target even when obstruction breaking is disabled. */
+   public final Settings.Setting<List<Block>> allowBreakAnyway = new Settings.Setting<>(new ArrayList<>());
    public final Settings.Setting<Boolean> allowSprint = new Settings.Setting<>(true);
    public final Settings.Setting<Boolean> allowPlace = new Settings.Setting<>(true);
    public final Settings.Setting<Boolean> allowInventory = new Settings.Setting<>(true);
@@ -80,9 +82,15 @@ public final class Settings {
       )
    );
    public final Settings.Setting<List<Block>> blocksToAvoid = new Settings.Setting<>(new ArrayList<>(List.of()));
+   /** Blocks pathing may never break. Soft preferences live in blocksToAvoidBreaking. */
+   public final Settings.Setting<List<Block>> blocksToDisallowBreaking = new Settings.Setting<>(new ArrayList<>());
    public final Settings.Setting<List<Block>> blocksToAvoidBreaking = new Settings.Setting<>(
       new ArrayList<>(List.of(Blocks.CRAFTING_TABLE, Blocks.FURNACE, Blocks.CAMPFIRE, Blocks.SMOKER, Blocks.BLAST_FURNACE, Blocks.CHEST, Blocks.TRAPPED_CHEST))
    );
+   public final Settings.Setting<Double> avoidBreakingMultiplier = new Settings.Setting<>(0.1);
+   public final Settings.Setting<Boolean> strictLiquidCheck = new Settings.Setting<>(false);
+   public final Settings.Setting<Boolean> allowVines = new Settings.Setting<>(false);
+   public final Settings.Setting<Boolean> allowWalkOnMagmaBlocks = new Settings.Setting<>(false);
    public final Settings.Setting<TagKey<Block>> buildIgnoreBlocks = new Settings.Setting<>(
       TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(InternalBaritoneRuntime.MOD_ID, "build/ignored_blocks"))
    );
@@ -169,7 +177,9 @@ public final class Settings {
    public final Settings.Setting<Integer> pathHistoryCutoffAmount = new Settings.Setting<>(50);
    public final Settings.Setting<Integer> mineGoalUpdateInterval = new Settings.Setting<>(5);
    public final Settings.Setting<Integer> maxCachedWorldScanCount = new Settings.Setting<>(10);
-   public final Settings.Setting<Integer> minYLevelWhileMining = new Settings.Setting<>(-64);
+   public final Settings.Setting<Integer> mineMaxOreLocationsCount = new Settings.Setting<>(64);
+   public final Settings.Setting<Integer> minYLevelWhileMining = new Settings.Setting<>(0);
+   public final Settings.Setting<Integer> maxYLevelWhileMining = new Settings.Setting<>(2031);
    public final Settings.Setting<Boolean> allowOnlyExposedOres = new Settings.Setting<>(false);
    public final Settings.Setting<Integer> allowOnlyExposedOresDistance = new Settings.Setting<>(1);
    public final Settings.Setting<Boolean> exploreForBlocks = new Settings.Setting<>(true);

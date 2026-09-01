@@ -27,12 +27,12 @@ import dev.dudie.baritonehelper.internal.baritone.api.utils.PathCalculationResul
 import dev.dudie.baritonehelper.internal.baritone.pathing.movement.CalculationContext;
 import dev.dudie.baritonehelper.internal.baritone.utils.pathing.PathBase;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import java.util.Arrays;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class AbstractNodeCostSearch implements IPathFinder {
+   protected final BetterBlockPos realStart;
    protected final int startX;
    protected final int startY;
    protected final int startZ;
@@ -49,8 +49,9 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
    protected static final double MIN_DIST_PATH = 5.0;
    protected static final double MIN_IMPROVEMENT = 0.01;
 
-   AbstractNodeCostSearch(int startX, int startY, int startZ, Goal goal, CalculationContext context) {
+   AbstractNodeCostSearch(BetterBlockPos realStart, int startX, int startY, int startZ, Goal goal, CalculationContext context) {
       this.bestSoFar = new PathNode[COEFFICIENTS.length];
+      this.realStart = realStart;
       this.startX = startX;
       this.startY = startY;
       this.startZ = startZ;
@@ -130,6 +131,13 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
       return xDiff * xDiff + yDiff * yDiff + zDiff * zDiff;
    }
 
+   private double getDistFromStartSq(PathNode.Snapshot n) {
+      int xDiff = n.x() - this.startX;
+      int yDiff = n.y() - this.startY;
+      int zDiff = n.z() - this.startZ;
+      return xDiff * xDiff + yDiff * yDiff + zDiff * zDiff;
+   }
+
    protected PathNode getNodeAtPosition(int x, int y, int z, long hashCode) {
       PathNode node = (PathNode)this.map.get(hashCode);
       if (node == null) {
@@ -148,7 +156,7 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
       }
 
       return Optional.ofNullable(snapshot.mostRecentConsidered)
-         .map(node -> new Path(snapshot.startNode, node, 0, this.goal, this.context));
+         .map(node -> new Path(this.realStart, snapshot.startNode, node, 0, this.goal, this.context));
    }
 
    @Override
@@ -190,7 +198,7 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
                      this.context.baritone.logDebug("A* cost coefficient " + COEFFICIENTS[i]);
                   }
 
-                  return Optional.of(new Path(snapshot.startNode, snapshot.bestSoFar[i], numNodes, this.goal, this.context));
+                  return Optional.of(new Path(this.realStart, snapshot.startNode, snapshot.bestSoFar[i], numNodes, this.goal, this.context));
                }
             }
          }
@@ -208,20 +216,23 @@ public abstract class AbstractNodeCostSearch implements IPathFinder {
       }
    }
 
-   /** Publish a point-in-time view so tick-thread progress reads never walk a live array. */
+   /** Publish complete immutable chain copies so tick-thread progress reads never walk live nodes. */
    protected final void publishProgress() {
       this.progress.set(new ProgressSnapshot(this.startNode, this.mostRecentConsidered, this.bestSoFar));
    }
 
    private static final class ProgressSnapshot {
-      private final PathNode startNode;
-      private final PathNode mostRecentConsidered;
-      private final PathNode[] bestSoFar;
+      private final PathNode.Snapshot startNode;
+      private final PathNode.Snapshot mostRecentConsidered;
+      private final PathNode.Snapshot[] bestSoFar;
 
       private ProgressSnapshot(PathNode startNode, PathNode mostRecentConsidered, PathNode[] bestSoFar) {
-         this.startNode = startNode;
-         this.mostRecentConsidered = mostRecentConsidered;
-         this.bestSoFar = Arrays.copyOf(bestSoFar, bestSoFar.length);
+         this.startNode = PathNode.Snapshot.copyOf(startNode);
+         this.mostRecentConsidered = PathNode.Snapshot.copyOf(mostRecentConsidered);
+         this.bestSoFar = new PathNode.Snapshot[bestSoFar.length];
+         for (int i = 0; i < bestSoFar.length; i++) {
+            this.bestSoFar[i] = PathNode.Snapshot.copyOf(bestSoFar[i]);
+         }
       }
    }
 

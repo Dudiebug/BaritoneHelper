@@ -47,4 +47,15 @@ public class GoalAxis implements Goal {
    public String toString() {
       return "GoalAxis";
    }
+
+   @Override
+   public boolean equals(Object other) {
+      return this == other || other != null && this.getClass() == other.getClass()
+            && this.targetHeight == ((GoalAxis)other).targetHeight;
+   }
+
+   @Override
+   public int hashCode() {
+      return Integer.hashCode(this.targetHeight);
+   }
 }

@@ -23,7 +23,7 @@ public class GoalComposite implements Goal {
    private final Goal[] goals;
 
    public GoalComposite(Goal... goals) {
-      this.goals = goals;
+      this.goals = goals.clone();
    }
 
    @Override
@@ -65,6 +65,18 @@ public class GoalComposite implements Goal {
    }
 
    public Goal[] goals() {
-      return this.goals;
+      return this.goals.clone();
+   }
+
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      return Arrays.equals(this.goals, ((GoalComposite)other).goals);
+   }
+
+   @Override
+   public int hashCode() {
+      return Arrays.hashCode(this.goals);
    }
 }

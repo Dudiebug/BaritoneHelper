@@ -19,6 +19,7 @@ package dev.dudie.baritonehelper.internal.baritone.api.entity;
 
 import dev.dudie.baritonehelper.internal.baritone.api.utils.IBucketAccessor;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.internal.baritone.cache.WorldKnowledgeEvents;
 import com.mojang.logging.LogUtils;
 import java.util.Objects;
 import java.util.HashSet;
@@ -28,6 +29,7 @@ import dev.dudie.baritonehelper.internal.baritone.InternalEnchantmentUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action;
 import net.minecraft.server.level.ServerLevel;
@@ -320,6 +322,10 @@ public class LivingEntityInteractionManager {
           if (!this.world.removeBlock(pos, false)) {
              return false;
           }
+          if (this.livingEntity instanceof WorkerEntity) {
+             WorldKnowledgeEvents.recordBlockChange(
+                   this.world, pos, blockState, this.world.getBlockState(pos));
+          }
 
           block.destroy(this.world, pos, blockState);
 
@@ -419,11 +425,19 @@ public class LivingEntityInteractionManager {
          Direction direction = blockHitResult.getDirection();
          BlockPos blockPos2 = blockPos.relative(direction);
          if (((IBucketAccessor)bucket).getFluid() == Fluids.EMPTY) {
+            if (user instanceof WorkerEntity worker
+                  && (!worker.canInteractAt(blockPos) || !worker.canModifyAt(blockPos))) {
+               return InteractionResultHolder.fail(itemStack);
+            }
             BlockState blockState = world.getBlockState(blockPos);
             if (blockState.getBlock() instanceof BucketPickup) {
                BucketPickup fluidDrainable = (BucketPickup)blockState.getBlock();
-                ItemStack itemStack2 = fluidDrainable.pickupBlock(player, world, blockPos, blockState);
+               ItemStack itemStack2 = fluidDrainable.pickupBlock(player, world, blockPos, blockState);
                if (!itemStack2.isEmpty()) {
+                  if (user instanceof WorkerEntity) {
+                     WorldKnowledgeEvents.recordBlockChange(
+                           world, blockPos, blockState, world.getBlockState(blockPos));
+                  }
                   fluidDrainable.getPickupSound().ifPresent(sound -> user.playSound(sound, 1.0F, 1.0F));
                   world.gameEvent(user, GameEvent.FLUID_PICKUP, blockPos);
                   ItemStack itemStack3 = exchangeStack(itemStack, user, itemStack2);
@@ -437,7 +451,19 @@ public class LivingEntityInteractionManager {
             BlockPos blockPos3 = blockState.getBlock() instanceof LiquidBlockContainer && ((IBucketAccessor)bucket).getFluid() == Fluids.WATER
                ? blockPos
                : blockPos2;
+            if (user instanceof WorkerEntity worker
+                  && (!worker.canInteractAt(blockPos3)
+                  || !worker.canModifyAt(blockPos3, BuiltInRegistries.BLOCK.getKey(
+                        ((IBucketAccessor)bucket).getFluid().defaultFluidState()
+                              .createLegacyBlock().getBlock())))) {
+               return InteractionResultHolder.fail(itemStack);
+            }
+            BlockState replacedState = world.getBlockState(blockPos3);
              if (bucket.emptyContents(player, world, blockPos3, blockHitResult, itemStack)) {
+                if (user instanceof WorkerEntity) {
+                   WorldKnowledgeEvents.recordBlockChange(
+                         world, blockPos3, replacedState, world.getBlockState(blockPos3));
+                }
                 bucket.checkExtraContent(player, world, itemStack, blockPos3);
                 ItemStack itemStack3 = exchangeStack(itemStack, user, new ItemStack(Items.BUCKET));
                 return InteractionResultHolder.sidedSuccess(itemStack3, world.isClientSide());
@@ -499,9 +525,11 @@ public class LivingEntityInteractionManager {
          return InteractionResult.PASS;
       }
       BlockPos blockPos = hitResult.getBlockPos();
-      if (player instanceof WorkerEntity worker && original.getItem() instanceof BlockItem
+      if (player instanceof WorkerEntity worker
+            && (!worker.canInteractAt(blockPos)
+            || (original.getItem() instanceof BlockItem
             && (!worker.configuration().pathing().allowBlockPlacement
-            || !worker.canModifyAt(blockPos.relative(hitResult.getDirection())))) {
+            || !canCommitBlockInteraction(worker, blockPos, hitResult, original))))) {
          return InteractionResult.FAIL;
       }
       BlockState blockState = world.getBlockState(blockPos);
@@ -519,6 +547,9 @@ public class LivingEntityInteractionManager {
                   return InteractionResult.FAIL;
                }
                if (actionResult.consumesAction()) {
+                  if (!canCommitBlockInteraction(player, blockPos, hitResult, original)) {
+                     return InteractionResult.FAIL;
+                  }
                   this.commitHandResult(player, hand, original, itemStack);
                   return actionResult.result();
                }
@@ -543,6 +574,9 @@ public class LivingEntityInteractionManager {
 
             if (actionResult2 != InteractionResult.FAIL
                   && (actionResult2.consumesAction() || !ItemStack.matches(original, itemStack))) {
+               if (!canCommitBlockInteraction(player, blockPos, hitResult, original)) {
+                  return InteractionResult.FAIL;
+               }
                this.commitHandResult(player, hand, original, itemStack);
             }
 
@@ -551,6 +585,16 @@ public class LivingEntityInteractionManager {
             return InteractionResult.PASS;
          }
       }
+   }
+
+   private static boolean canCommitBlockInteraction(
+         LivingEntity player, BlockPos blockPos, BlockHitResult hitResult, ItemStack original) {
+      if (!(player instanceof WorkerEntity worker)) return true;
+      if (!worker.canInteractAt(blockPos)) return false;
+      if (!(original.getItem() instanceof BlockItem blockItem)) return true;
+      BlockPos placement = blockPos.relative(hitResult.getDirection());
+      return worker.canModifyAt(
+            placement, BuiltInRegistries.BLOCK.getKey(blockItem.getBlock()));
    }
 
    public void setWorld(ServerLevel world) {

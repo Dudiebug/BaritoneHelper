@@ -20,20 +20,24 @@ package dev.dudie.baritonehelper.internal.baritone.cache;
 import dev.dudie.baritonehelper.internal.baritone.api.cache.ICachedWorld;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 
 /** Thread-safe locations learned from immutable chunk scans. */
 public final class CachedWorld implements ICachedWorld {
-   private final Set<Long> cachedChunks = ConcurrentHashMap.newKeySet();
-   private final ConcurrentMap<String, Set<Long>> locationsByBlock = new ConcurrentHashMap<>();
+   private final TargetCoverageLedger ledger;
+
+   public CachedWorld() {
+      this(new TargetCoverageLedger());
+   }
+
+   CachedWorld(TargetCoverageLedger ledger) {
+      this.ledger = ledger;
+   }
 
    @Override
    public boolean isCached(int blockX, int blockZ) {
-      return this.cachedChunks.contains(ChunkPos.asLong(blockX >> 4, blockZ >> 4));
+      return this.ledger.anyScanned(ChunkPos.asLong(blockX >> 4, blockZ >> 4));
    }
 
    @Override
@@ -43,17 +47,18 @@ public final class CachedWorld implements ICachedWorld {
          return result;
       }
 
-      Set<Long> locations = this.locationsByBlock.get(block);
+      var locations = this.ledger.allLocations(block);
       if (locations == null || locations.isEmpty()) {
          return result;
       }
 
-      long centerChunk = ChunkPos.asLong(centerX >> 4, centerZ >> 4);
+      int centerRegionX = centerX >> 9;
+      int centerRegionZ = centerZ >> 9;
       for (long packed : locations) {
-         ChunkPos chunk = new ChunkPos(ChunkPos.getX(packed), ChunkPos.getZ(packed));
-         if (chunk.distanceSquared(centerChunk) <= maxRegionDistanceSq) {
-            result.add(BlockPos.of(packed));
-         }
+         BlockPos pos = BlockPos.of(packed);
+         long dx = (long) (pos.getX() >> 9) - centerRegionX;
+         long dz = (long) (pos.getZ() >> 9) - centerRegionZ;
+         if (dx * dx + dz * dz <= maxRegionDistanceSq) result.add(pos);
       }
       result.sort(Comparator
             .comparingLong((BlockPos pos) -> {
@@ -69,13 +74,62 @@ public final class CachedWorld implements ICachedWorld {
    }
 
    void markChunkCached(long chunk) {
-      this.cachedChunks.add(chunk);
+      // Target-aware scans use markTargetScanned; generic cache completion is intentionally ignored.
    }
 
    void addLocation(String block, BlockPos position) {
       if (block == null || position == null) {
          return;
       }
-      this.locationsByBlock.computeIfAbsent(block, ignored -> ConcurrentHashMap.newKeySet()).add(position.asLong());
+      this.ledger.addLocation(block, ChunkPos.asLong(position.getX() >> 4, position.getZ() >> 4), position.asLong());
+   }
+
+   void markTargetScanned(String block, long chunk) {
+      this.ledger.markScanned(block, chunk);
+   }
+
+   public CoverageState coverage(String block, long chunk) {
+      return this.ledger.state(block, chunk);
+   }
+
+   public int coverageCount(String block, CoverageState state) {
+      return this.ledger.count(block, state);
+   }
+
+   public int indexedLocationCount(String block) {
+      return this.ledger.locationCount(block);
+   }
+
+   public boolean beginScan(String block, long chunk) {
+      return this.ledger.beginScan(block, chunk);
+   }
+
+   public long beginScanRevision(String block, long chunk) {
+      return this.ledger.beginScanRevision(block, chunk);
+   }
+
+   public void publishScan(String block, long chunk, java.util.Collection<Long> locations) {
+      this.ledger.publish(block, chunk, locations);
+   }
+
+   public boolean publishScan(
+         String block, long chunk, long expectedRevision, java.util.Collection<Long> locations) {
+      return this.ledger.publishIfRevision(block, chunk, expectedRevision, locations);
+   }
+
+   public void abortScan(String block, long chunk) {
+      this.ledger.abortScan(block, chunk);
+   }
+
+   public void abortScan(String block, long chunk, long expectedRevision) {
+      this.ledger.abortScan(block, chunk, expectedRevision);
+   }
+
+   public void markDirty(long chunk) {
+      this.ledger.markDirty(chunk);
+   }
+
+   public void recordBlockChange(long chunk, long position, String beforeTarget, String afterTarget) {
+      this.ledger.recordBlockChange(chunk, position, beforeTarget, afterTarget);
    }
 }

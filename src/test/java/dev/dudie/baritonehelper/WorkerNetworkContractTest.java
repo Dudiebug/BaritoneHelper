@@ -55,9 +55,13 @@ final class WorkerNetworkContractTest {
     void clientRejectsOlderOrDuplicateSnapshots() throws IOException {
         String source = read("src/main/java/dev/dudie/baritonehelper/client/WorkerDashboardScreen.java");
 
-        assertTrue(source.contains("configurationRevision() <"));
-        assertTrue(source.contains("snapshot.equals(this.snapshot)"));
+        assertTrue(source.contains("incomingView.stateSequence() > snapshotView.stateSequence()"));
+        assertTrue(source.contains("currentUuid.equals(incomingUuid)"));
         assertTrue(source.contains("updateButtons(configurationChanged)"));
+
+        String worker = read("src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java");
+        assertTrue(worker.contains("DashboardStateSequence"));
+        assertTrue(worker.contains("nextDashboardStateSequence()"));
     }
 
     @Test

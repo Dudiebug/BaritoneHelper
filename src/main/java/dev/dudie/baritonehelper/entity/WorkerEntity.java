@@ -3,12 +3,14 @@ package dev.dudie.baritonehelper.entity;
 import dev.dudie.baritonehelper.BaritoneHelper;
 import dev.dudie.baritonehelper.internal.baritone.Baritone;
 import dev.dudie.baritonehelper.internal.baritone.BaritoneEntity;
+import dev.dudie.baritonehelper.internal.baritone.InternalBaritoneRuntime;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.IInteractionManagerProvider;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.IInventoryProvider;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.LivingEntityInteractionManager;
 import dev.dudie.baritonehelper.internal.baritone.api.entity.LivingEntityInventory;
 import dev.dudie.baritonehelper.internal.baritone.api.behavior.PathingStatus;
 import dev.dudie.baritonehelper.internal.baritone.api.pathing.goals.GoalBlock;
+import dev.dudie.baritonehelper.internal.baritone.process.MineProcess;
 import dev.dudie.baritonehelper.internal.baritone.utils.ToolSet;
 import dev.dudie.baritonehelper.internal.baritone.utils.player.EntityContext;
 import dev.dudie.baritonehelper.worker.WorkerActionResult;
@@ -21,6 +23,10 @@ import dev.dudie.baritonehelper.worker.WorkerJobConfiguration;
 import dev.dudie.baritonehelper.worker.WorkerRuntimeState;
 import dev.dudie.baritonehelper.worker.WorkerInventory;
 import dev.dudie.baritonehelper.worker.WorkerStorage;
+import dev.dudie.baritonehelper.worker.SearchMode;
+import dev.dudie.baritonehelper.worker.SearchTelemetry;
+import dev.dudie.baritonehelper.worker.PathTelemetry;
+import dev.dudie.baritonehelper.worker.WorkerPickupService;
 import dev.dudie.baritonehelper.worker.NoWorkZone;
 import dev.dudie.baritonehelper.worker.NoWorkZoneMode;
 import dev.dudie.baritonehelper.network.WorkerNetwork;
@@ -84,10 +90,16 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         BaritoneEntity, IInventoryProvider, IInteractionManagerProvider {
     public static final int BASE_SLOTS = 27;
     public static final int EXPANDED_SLOTS = 54;
+    public static final int ACTIVE_VIEW_RADIUS = 6;
+    public static final int SIMULATION_RADIUS = 2;
+    /** Retained for source/API compatibility; active tickets use ACTIVE_VIEW_RADIUS. */
+    @Deprecated
     public static final int WORKER_CHUNK_RADIUS = 12;
-    public static final int MAX_WORKER_TICKETS =
-            (WORKER_CHUNK_RADIUS * 2 + 1) * (WORKER_CHUNK_RADIUS * 2 + 1);
-    private static final int PATHING_SNAPSHOT_RADIUS = 4;
+    public static final int MAX_SEARCH_TICKETS = 4;
+    private static final int VIEW_TICKET_COUNT =
+            (ACTIVE_VIEW_RADIUS * 2 + 1) * (ACTIVE_VIEW_RADIUS * 2 + 1);
+    public static final int MAX_WORKER_TICKETS = VIEW_TICKET_COUNT + MAX_SEARCH_TICKETS;
+    private static final int PATHING_SNAPSHOT_RADIUS = ACTIVE_VIEW_RADIUS;
 
     private final NonNullList<ItemStack> items =
             NonNullList.withSize(EXPANDED_SLOTS, ItemStack.EMPTY);
@@ -101,6 +113,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     private transient @Nullable EntityContext baritoneContext;
     private transient @Nullable LivingEntityInventory baritoneInventory;
     private transient @Nullable LivingEntityInteractionManager interactionManager;
+    private transient String lastDisposedMineDiagnostic = "none";
+    private transient long pathTelemetryStartedNanos;
+    private transient PathingStatus lastPathTelemetryStatus = PathingStatus.IDLE;
     private final long[] workerTickNanos = new long[200];
     private int workerTickSampleIndex;
     private int workerTickSampleCount;
@@ -125,6 +140,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     private long ticketCenter = Long.MIN_VALUE;
     private int ticketSimulationRadius = -1;
     private int configurationRevision;
+    private long dashboardStateSequence;
+    @Nullable
+    private Boolean pathingMobGriefing;
 
     public WorkerEntity(EntityType<? extends WorkerEntity> type, Level level) {
         super(type, level);
@@ -204,6 +222,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     public synchronized void disposeBaritoneEngine() {
         if (baritoneEngine != null) {
+            if (baritoneEngine.getMineProcess() instanceof MineProcess mine) {
+                lastDisposedMineDiagnostic = mine.diagnosticState();
+            }
             cancelBreaking();
             baritoneEngine.shutdown();
         }
@@ -212,7 +233,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         baritoneInventory = null;
         interactionManager = null;
         breakingPosition = null;
-        releaseSearchTickets();
+        releaseWorkerTickets();
     }
 
     @Override
@@ -264,30 +285,67 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     public BlockPos workAreaCenter() { return configuration.workAreaCenter(); }
     public String workAreaDimension() { return configuration.workAreaDimension(); }
     public java.util.List<NoWorkZone> noWorkZones() { return configuration.noWorkZones(); }
+    public SearchMode searchMode() { return configuration.searchMode(); }
     public boolean isInsideNoModify(BlockPos position) {
         return configuration.inZone(level().dimension().location().toString(), position, NoWorkZoneMode.NO_MODIFY);
     }
     public boolean isInsideNoEnter(BlockPos position) {
         return configuration.inZone(level().dimension().location().toString(), position, NoWorkZoneMode.NO_ENTER);
     }
-    /** Shared guard used by both the collector and the embedded interaction adapter. */
-    public boolean canModifyAt(BlockPos position) {
-        if (position == null || level().isClientSide
-                || isInsideNoModify(position) || isInsideNoEnter(position)
-                || storagePosition().filter(position::equals).isPresent()
-                || level().getBlockEntity(position) != null) return false;
+    /** Shared movement boundary used by pathing, storage, and interactions. */
+    public boolean canEnterAt(BlockPos position) {
+        if (position == null || level().isClientSide || isInsideNoEnter(position)) return false;
         if (!workAreaDimension().isBlank()
                 && !workAreaDimension().equals(level().dimension().location().toString())) return false;
-        long dx = (long) position.getX() - workAreaCenter().getX();
-        long dz = (long) position.getZ() - workAreaCenter().getZ();
-        if (dx * dx + dz * dz > (long) horizontalSearchRadius() * horizontalSearchRadius()
-                || Math.abs(position.getY() - workAreaCenter().getY()) > verticalSearchRadius()) {
-            return false;
+        if (configuration.searchMode() != SearchMode.ROAM) {
+            long dx = (long) position.getX() - workAreaCenter().getX();
+            long dz = (long) position.getZ() - workAreaCenter().getZ();
+            if (dx * dx + dz * dz > (long) horizontalSearchRadius() * horizontalSearchRadius()
+                    || Math.abs(position.getY() - workAreaCenter().getY()) > verticalSearchRadius()) {
+                return false;
+            }
         }
-        if (!level().getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) return false;
+        return true;
+    }
+
+    /** Shared interaction boundary; commit callers must invoke it immediately before mutation. */
+    public boolean canInteractAt(BlockPos position) {
+        if (!canEnterAt(position)
+                || isInsideNoModify(position)
+                || storagePosition().filter(position::equals).isPresent()
+                || level().getBlockEntity(position) != null
+                || !level().getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) return false;
+        return !exclusions.contains(
+                BuiltInRegistries.BLOCK.getKey(level().getBlockState(position).getBlock()));
+    }
+
+    /** Shared guard used by the collector and the embedded interaction adapter. */
+    public boolean canModifyAt(BlockPos position) {
+        return canModifyAt(position, null);
+    }
+
+    /** Modification guard with the resulting block ID for placement/fluid commits. */
+    public boolean canModifyAt(BlockPos position, @Nullable ResourceLocation resultingBlockId) {
+        if (!canInteractAt(position)) return false;
         BlockState state = level().getBlockState(position);
+        ResourceLocation blockId = resultingBlockId == null
+                ? BuiltInRegistries.BLOCK.getKey(state.getBlock())
+                : resultingBlockId;
         return state.getDestroySpeed(level(), position) >= 0.0F
-                && !exclusions.contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()));
+                && !exclusions.contains(blockId);
+    }
+
+    /** Storage is the one allowed block-entity interaction and is revalidated at commit time. */
+    public boolean canStoreAt(BlockPos position) {
+        if (!canEnterAt(position)
+                || isInsideNoModify(position)
+                || !storagePosition().filter(position::equals).isPresent()
+                || !(level() instanceof ServerLevel serverLevel)
+                || !storageIsIn(serverLevel)
+                || !(level().getBlockEntity(position) instanceof Container)
+                || !level().getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) return false;
+        return !exclusions.contains(
+                BuiltInRegistries.BLOCK.getKey(level().getBlockState(position).getBlock()));
     }
 
     public void recordBaritoneBlockBroken(BlockPos position, BlockState state) {
@@ -326,6 +384,19 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         setChanged();
     }
 
+    /** Applies the dashboard's explicit desired search mode without starting the job. */
+    public boolean setSearchMode(SearchMode mode) {
+        if (mode == null) return false;
+        if (configuration.searchMode() == mode) return true;
+        cancelForConfigurationChange();
+        configuration.setSearchMode(mode);
+        configurationRevision++;
+        setRuntimeState(targetBlockId == null ? WorkerRuntimeState.UNCONFIGURED : WorkerRuntimeState.READY);
+        recordActivity("SEARCH_MODE:" + mode.serializedName());
+        setChanged();
+        return true;
+    }
+
     public boolean setPathingFlag(String key, boolean enabled) {
         var settings = configuration.pathing();
         switch (key == null ? "" : key) {
@@ -341,7 +412,10 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
         configuration.touch();
         configurationRevision++;
-        if (baritoneEngine != null) applyPathingSettings();
+        if (baritoneEngine != null) {
+            applyPathingSettings();
+            baritoneEngine.getPathingBehavior().softCancelIfSafe();
+        }
         setChanged();
         return true;
     }
@@ -381,17 +455,24 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         zoneSelectionId = null;
         return selected != null && isOwnedByPlayer(player) ? selected : null;
     }
-    public void addNoWorkZone(NoWorkZone zone) {
+    public boolean addNoWorkZone(NoWorkZone zone) {
+        if (zone == null) return false;
         java.util.ArrayList<NoWorkZone> zones = new java.util.ArrayList<>(configuration.noWorkZones());
-        if (zones.size() < 128) zones.add(zone);
+        if (zones.size() >= 128) return false;
+        zones.add(zone);
         configuration.replaceNoWorkZones(zones);
+        replanForPolicyChange();
         workerController.resetTransientState();
         setChanged();
+        return true;
     }
     public boolean removeNoWorkZone(java.util.UUID id) {
         java.util.ArrayList<NoWorkZone> zones = new java.util.ArrayList<>(configuration.noWorkZones());
         boolean removed = zones.removeIf(zone -> zone.id().equals(id));
-        if (removed) configuration.replaceNoWorkZones(zones);
+        if (removed) {
+            configuration.replaceNoWorkZones(zones);
+            replanForPolicyChange();
+        }
         workerController.resetTransientState();
         setChanged();
         return removed;
@@ -411,6 +492,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 zone.update(name, level().dimension().location().toString(), center,
                         horizontalRadius, verticalRadius, mode, enabled);
                 configuration.replaceNoWorkZones(zones);
+                replanForPolicyChange();
                 workerController.resetTransientState();
                 setChanged();
                 return true;
@@ -426,6 +508,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 zone.update(zone.name(), zone.dimension(), center, zone.horizontalRadius(),
                         zone.verticalRadius(), zone.mode(), zone.enabled());
                 configuration.replaceNoWorkZones(zones);
+                replanForPolicyChange();
                 workerController.resetTransientState();
                 setChanged();
                 return true;
@@ -447,6 +530,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 zone.update(zone.name(), level().dimension().location().toString(), center,
                         horizontalRadius, verticalRadius, mode, enabled);
                 configuration.replaceNoWorkZones(zones);
+                replanForPolicyChange();
                 workerController.resetTransientState();
                 setChanged();
                 return true;
@@ -462,6 +546,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 zone.update(zone.name(), zone.dimension(), zone.center(), zone.horizontalRadius(),
                         zone.verticalRadius(), zone.mode(), !zone.enabled());
                 configuration.replaceNoWorkZones(zones);
+                replanForPolicyChange();
                 workerController.resetTransientState();
                 setChanged();
                 return true;
@@ -476,6 +561,10 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             job = targetBlockId == null ? WorkerJob.IDLE : WorkerJob.READY;
         }
         workerController.resetTransientState();
+    }
+
+    private void replanForPolicyChange() {
+        if (baritoneEngine != null) baritoneEngine.getPathingBehavior().softCancelIfSafe();
     }
 
     public static AttributeSupplier.Builder createAttributes() {
@@ -511,7 +600,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     @Override
     protected void customServerAiStep() {
         super.customServerAiStep();
-        if (!(level() instanceof ServerLevel serverLevel)) return;
+        if (!(level() instanceof ServerLevel serverLevel) || pickupFrozen()) return;
         long started = System.nanoTime();
         workerController.tick(serverLevel);
         if (baritoneEngine != null) {
@@ -559,15 +648,26 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             return;
         }
 
+        if (pickupFrozen()) {
+            releaseWorkerTickets();
+            if (tickCount % 20 == 0 && updateOwnerRecord(serverLevel)) return;
+            if (tickCount % 10 == 0) WorkerNetwork.sendStateToOwner(this);
+            return;
+        }
+
+        boolean mobGriefing = serverLevel.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING);
+        if (pathingMobGriefing != null && pathingMobGriefing != mobGriefing) {
+            replanForPolicyChange();
+        }
+        pathingMobGriefing = mobGriefing;
         ensureWorkerTickets();
         if (job.activelyWorks()) {
             collectNearbyDrops();
         }
         if (tickCount % 20 == 0) {
-            updateOwnerRecord(serverLevel);
+            if (updateOwnerRecord(serverLevel)) return;
         }
-        if (tickCount % 10 == 0
-                && (job.activelyWorks() || runtimeState == WorkerRuntimeState.BLOCKED)) {
+        if (tickCount % 10 == 0) {
             WorkerNetwork.sendStateToOwner(this);
         }
         syncBaritoneInventory();
@@ -699,7 +799,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             Entity dropOwner = item.getOwner();
             if (dropOwner != null && dropOwner != this) continue;
             BlockPos dropPosition = item.blockPosition();
-            if (isInsideNoModify(dropPosition) || isInsideNoEnter(dropPosition)) continue;
+            if (!canEnterAt(dropPosition) || isInsideNoModify(dropPosition)) continue;
             ItemStack stack = item.getItem();
             int before = stack.getCount();
             WorkerInventory.insertGroundStack(this, stack);
@@ -712,6 +812,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     }
 
     public boolean beginPathTo(BlockPos destination) {
+        if (pickupFrozen()) return false;
         ensureWorkerTickets();
         if (level() instanceof ServerLevel serverLevel) {
             for (long packed : workerTicketChunks) {
@@ -731,6 +832,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         if (baritoneEngine == null) return;
         var settings = configuration.pathing();
         baritoneEngine.settings().allowBreak.set(settings.allowBreakingObstructions);
+        var targetBlock = targetBlockId == null ? null : BuiltInRegistries.BLOCK.get(targetBlockId);
+        baritoneEngine.settings().allowBreakAnyway.set(
+                targetBlock == null || targetBlock == Blocks.AIR ? List.of() : List.of(targetBlock));
         baritoneEngine.settings().allowPlace.set(settings.allowBlockPlacement);
         baritoneEngine.settings().allowParkour.set(settings.allowParkour);
         baritoneEngine.settings().allowParkourPlace.set(
@@ -753,19 +857,74 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         cancelBreaking();
     }
 
-    private void updateOwnerRecord(ServerLevel currentLevel) {
+    private boolean updateOwnerRecord(ServerLevel currentLevel) {
         UUID ownerId = getOwnerUUID();
         if (ownerId == null) {
-            return;
+            return false;
         }
 
         ServerPlayer owner = currentLevel.getServer().getPlayerList().getPlayer(ownerId);
         if (owner != null) {
-            owner.getData(BaritoneHelper.ACTIVE_WORKER).set(
+            if (WorkerPickupService.reconcile(owner, this)) return true;
+            owner.getData(BaritoneHelper.ACTIVE_WORKER).updateLocation(
                     getUUID(),
                     currentLevel.dimension().location().toString(),
                     blockPosition());
         }
+        return false;
+    }
+
+    public record PickupFreeze(
+            WorkerJob job,
+            WorkerBlockReason blockReason,
+            WorkerRuntimeState runtimeState,
+            boolean noAi) {}
+
+    /** Freezes every mutable runtime surface before the packed snapshot is captured. */
+    public PickupFreeze freezeForPickup() {
+        PickupFreeze freeze = new PickupFreeze(job, blockReason, runtimeState, isNoAi());
+        setNoAi(true);
+        runtimeState = WorkerRuntimeState.STOPPING;
+        recordActivity("PICKUP_PENDING");
+        disposeBaritoneEngine();
+        releaseWorkerTickets();
+        return freeze;
+    }
+
+    public void rollbackPickup(PickupFreeze freeze) {
+        if (freeze == null || isRemoved()) return;
+        job = freeze.job();
+        blockReason = freeze.blockReason();
+        runtimeState = freeze.runtimeState();
+        setNoAi(freeze.noAi());
+        workerController.resetTransientState();
+        if (job.activelyWorks()) ensureWorkerTickets();
+        recordActivity("PICKUP_ROLLED_BACK");
+        setChanged();
+    }
+
+    /** Restores a PENDING transaction whose server stopped before delivery. */
+    public void restoreInterruptedPickup() {
+        if (isRemoved()) return;
+        setNoAi(false);
+        if (runtimeState == WorkerRuntimeState.STOPPING) {
+            runtimeState = job.activelyWorks()
+                    ? WorkerRuntimeState.STARTING
+                    : targetBlockId == null ? WorkerRuntimeState.UNCONFIGURED : WorkerRuntimeState.READY;
+        }
+        workerController.resetTransientState();
+        if (job.activelyWorks()) ensureWorkerTickets();
+        recordActivity("PICKUP_RESUMED_AFTER_RESTART");
+        setChanged();
+    }
+
+    /** Final removal deliberately keeps cargo inside the committed packed component. */
+    public void commitPickupRemoval() {
+        if (isRemoved()) return;
+        disposeBaritoneEngine();
+        releaseWorkerTickets();
+        recordActivity("PICKUP_COMMITTED");
+        discard();
     }
 
     public WorkerJob job() {
@@ -817,6 +976,11 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         return Math.max(configurationRevision, configuration.revision());
     }
 
+    public long nextDashboardStateSequence() {
+        if (dashboardStateSequence < Long.MAX_VALUE) dashboardStateSequence++;
+        return dashboardStateSequence;
+    }
+
     public int workerTicketCount() {
         return ticketsConfirmed ? workerTicketChunks.size() : 0;
     }
@@ -826,7 +990,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     }
 
     public int simulationTicketCount() {
-        return simulationTicketChunks.size();
+        return ticketsConfirmed ? simulationTicketChunks.size() : 0;
     }
 
     public long workerTickP95Nanos() {
@@ -841,7 +1005,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     }
 
     public Set<Long> loadedTicketChunks() {
-        return Set.copyOf(workerTicketChunks);
+        LinkedHashSet<Long> loaded = new LinkedHashSet<>(workerTicketChunks);
+        loaded.addAll(searchTicketChunks);
+        return Set.copyOf(loaded);
     }
 
     /** Server-thread source set for immutable path-calculation snapshots. */
@@ -853,7 +1019,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     public boolean workerChunkWindowReady() {
         if (!(level() instanceof ServerLevel serverLevel)
-                || workerTicketChunks.size() != MAX_WORKER_TICKETS) {
+                || workerTicketChunks.size() != VIEW_TICKET_COUNT) {
             return false;
         }
         for (long packed : workerTicketChunks) {
@@ -864,7 +1030,11 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     }
 
     public boolean ensureMineProcessStarted() {
-        if (targetBlockId == null || workerTicketChunks.size() != MAX_WORKER_TICKETS) {
+        // Ticket bookkeeping is updated before NeoForge has necessarily made
+        // every requested chunk available. Starting A* against that partial
+        // palette snapshot can turn a reachable target into a transient
+        // CALC_FAILED, which MineProcess correctly interprets as unreachable.
+        if (targetBlockId == null || !workerChunkWindowReady()) {
             if (targetBlockId != null) setRuntimeState(WorkerRuntimeState.LOADING_CHUNKS);
             return false;
         }
@@ -879,6 +1049,48 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     public boolean mineProcessActive() {
         return baritoneEngine != null && baritoneEngine.getMineProcess().isActive();
+    }
+
+    public MineProcess.SearchOutcome mineSearchOutcome() {
+        return baritoneEngine != null && baritoneEngine.getMineProcess() instanceof MineProcess mine
+                ? mine.searchOutcome() : MineProcess.SearchOutcome.ACTIVE;
+    }
+
+    public SearchTelemetry searchTelemetry() {
+        return baritoneEngine != null && baritoneEngine.getMineProcess() instanceof MineProcess mine
+                ? mine.telemetry() : SearchTelemetry.idle(searchMode());
+    }
+
+    public PathTelemetry pathTelemetry() {
+        PathingStatus status = pathingStatus();
+        long now = System.nanoTime();
+        if (status == PathingStatus.IDLE) {
+            pathTelemetryStartedNanos = 0L;
+        } else if (lastPathTelemetryStatus == PathingStatus.IDLE || pathTelemetryStartedNanos == 0L) {
+            pathTelemetryStartedNanos = now;
+        }
+        lastPathTelemetryStatus = status;
+        String destination = lastNavigationDestination().map(BlockPos::toString).orElseGet(() -> {
+            if (baritoneEngine == null || baritoneEngine.getPathingBehavior().getCurrent() == null) return "";
+            return baritoneEngine.getPathingBehavior().getCurrent().getPath().getDest().toString();
+        });
+        return new PathTelemetry(
+                status,
+                currentPathNode(),
+                currentPathLength(),
+                currentPathCost(),
+                destination,
+                InternalBaritoneRuntime.pathQueueDepth(),
+                workerTicketCount(),
+                simulationTicketCount(),
+                searchTicketCount(),
+                pathTelemetryStartedNanos == 0L ? 0L : Math.max(0L, now - pathTelemetryStartedNanos));
+    }
+
+    public String mineProcessDiagnostic() {
+        String live = baritoneEngine != null && baritoneEngine.getMineProcess() instanceof MineProcess mine
+                ? mine.diagnosticState() : "engine=uninitialized";
+        return live + ", disposed={" + lastDisposedMineDiagnostic + "}";
     }
 
     public int inventoryUsedSlots() {
@@ -1002,6 +1214,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         if (targetBlockId == null) {
             job = WorkerJob.IDLE;
             blockReason = WorkerBlockReason.NO_TARGET;
+            releaseWorkerTickets();
             workerController.resetTransientState();
             setChanged();
             return WorkerActionResult.NO_TARGET;
@@ -1021,14 +1234,13 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         if (exclusions.contains(targetBlockId)) {
             job = WorkerJob.READY;
             blockReason = WorkerBlockReason.TARGET_EXCLUDED;
+            releaseWorkerTickets();
             workerController.resetTransientState();
             setChanged();
             return WorkerActionResult.TARGET_EXCLUDED;
         }
         if (configuration.complete()) {
-            job = WorkerJob.COMPLETED;
-            blockReason = WorkerBlockReason.NONE;
-            setRuntimeState(WorkerRuntimeState.COMPLETED);
+            markCompleted();
             setChanged();
             return WorkerActionResult.ALREADY_COMPLETED;
         }
@@ -1068,6 +1280,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         configuration.clearTarget();
         job = WorkerJob.IDLE;
         blockReason = WorkerBlockReason.NONE;
+        releaseWorkerTickets();
         configurationRevision++;
         workerController.resetTransientState();
         setChanged();
@@ -1083,6 +1296,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         storageDimension = level.dimension().location().toString();
         storagePosition = position.immutable();
         configuration.setStorage(storageDimension, storagePosition);
+        replanForPolicyChange();
         if (job == WorkerJob.BLOCKED) {
             job = targetBlockId == null ? WorkerJob.IDLE : WorkerJob.READY;
             blockReason = WorkerBlockReason.NONE;
@@ -1097,6 +1311,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         storagePosition = null;
         storageDimension = "";
         configuration.clearStorage();
+        replanForPolicyChange();
         configurationRevision++;
         if (job == WorkerJob.DEPOSIT) {
             markBlocked(WorkerBlockReason.STORAGE_MISSING);
@@ -1124,6 +1339,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
         configuration.setExcluded(blockId, excluded);
         configurationRevision++;
+        replanForPolicyChange();
         workerController.resetTransientState();
         setChanged();
         return excluded;
@@ -1134,6 +1350,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             job = WorkerJob.IDLE;
             blockReason = WorkerBlockReason.NO_TARGET;
             setRuntimeState(WorkerRuntimeState.UNCONFIGURED);
+            releaseWorkerTickets();
         } else {
             job = WorkerJob.COLLECT;
             blockReason = WorkerBlockReason.NONE;
@@ -1206,70 +1423,73 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 workerController.resetTransientState();
             }
             disposeBaritoneEngine();
-            releaseWorkerTickets();
         }
         super.setLevel(level);
         spawnSurfaceChecked = false;
     }
 
     public void openDashboard(ServerPlayer player) {
-        if (!isOwnedByPlayer(player) || player.level() != level()) {
+        if (!isOwnedByPlayer(player)) {
             return;
         }
         WorkerNetwork.openDashboard(player, this);
     }
 
     public void ensureWorkerTickets() {
+        if (!job.activelyWorks() || pickupFrozen()) {
+            releaseWorkerTickets();
+            return;
+        }
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
 
         ChunkPos center = chunkPosition();
-        int simulationRadius = Math.min(
-                WORKER_CHUNK_RADIUS,
-                Math.max(0, serverLevel.getServer().getPlayerList().getSimulationDistance()));
         if (ticketsConfirmed
                 && ticketCenter == center.toLong()
-                && ticketSimulationRadius == simulationRadius) {
+                && ticketSimulationRadius == SIMULATION_RADIUS
+                && workerTicketChunks.size() == VIEW_TICKET_COUNT
+                && simulationTicketChunks.size() == (SIMULATION_RADIUS * 2 + 1) * (SIMULATION_RADIUS * 2 + 1)) {
             return;
         }
 
-        Set<Long> desired = WorkerChunkWindow.around(center.x, center.z, WORKER_CHUNK_RADIUS);
-        Set<Long> desiredSimulation = WorkerChunkWindow.around(center.x, center.z, simulationRadius);
+        Set<Long> desired = WorkerChunkWindow.around(center.x, center.z, ACTIVE_VIEW_RADIUS);
+        Set<Long> desiredSimulation = WorkerChunkWindow.around(
+                center.x, center.z, SIMULATION_RADIUS);
         if (!ticketsConfirmed) {
-            // Controller tickets use level 31 even when forceTicks is false.
-            // Keep only one persistent center anchor, which reloads the entity
-            // after restart; the 625-chunk view is a runtime level-33 ticket.
-            for (long oldChunk : workerTicketChunks) {
-                setPersistentAnchor(serverLevel, oldChunk, false);
-                setLegacyTickingTicket(serverLevel, oldChunk, false);
-            }
-            setPersistentAnchor(serverLevel, center.toLong(), true);
+            // Ticket state is runtime-only. Clear any coordinates restored from
+            // an older save before installing the active footprint.
+            releaseWorkerTickets();
+            setLegacyTickingTicket(serverLevel, center.toLong(), true);
             for (long chunk : desired) {
                 setViewTicket(serverLevel, chunk, true);
             }
-            setSimulationRegionTicket(serverLevel, center, simulationRadius, true);
+            setSimulationRegionTicket(
+                    serverLevel, center, SIMULATION_RADIUS, true);
             workerTicketChunks.clear();
             workerTicketChunks.addAll(desired);
             simulationTicketChunks.clear();
             simulationTicketChunks.addAll(desiredSimulation);
             ticketsConfirmed = true;
             ticketCenter = center.toLong();
-            ticketSimulationRadius = simulationRadius;
+            ticketSimulationRadius = SIMULATION_RADIUS;
             return;
         }
 
         long previousCenter = ticketCenter;
         int previousSimulationRadius = ticketSimulationRadius;
         boolean centerChanged = previousCenter != center.toLong();
-        boolean simulationChanged = centerChanged || previousSimulationRadius != simulationRadius;
+        boolean simulationChanged = centerChanged || previousSimulationRadius != SIMULATION_RADIUS;
 
         if (centerChanged) {
-            setPersistentAnchor(serverLevel, center.toLong(), true);
+            // Add the new ticking anchor before dropping the old one so an
+            // offline worker keeps a live center while its window moves.
+            setLegacyTickingTicket(serverLevel, center.toLong(), true);
         }
         reconcileViewTickets(serverLevel, workerTicketChunks, desired);
         if (simulationChanged) {
-            setSimulationRegionTicket(serverLevel, center, simulationRadius, true);
+            setSimulationRegionTicket(
+                    serverLevel, center, SIMULATION_RADIUS, true);
             if (previousCenter != Long.MIN_VALUE) {
                 setSimulationRegionTicket(
                         serverLevel,
@@ -1281,10 +1501,10 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             simulationTicketChunks.addAll(desiredSimulation);
         }
         if (centerChanged && previousCenter != Long.MIN_VALUE) {
-            setPersistentAnchor(serverLevel, previousCenter, false);
+            setLegacyTickingTicket(serverLevel, previousCenter, false);
         }
         ticketCenter = center.toLong();
-        ticketSimulationRadius = simulationRadius;
+        ticketSimulationRadius = SIMULATION_RADIUS;
     }
 
     public void releaseWorkerTickets() {
@@ -1292,8 +1512,10 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
             for (long chunk : Set.copyOf(workerTicketChunks)) {
                 setViewTicket(serverLevel, chunk, false);
                 setLegacyTickingTicket(serverLevel, chunk, false);
+                setPersistentAnchor(serverLevel, chunk, false);
             }
             if (ticketCenter != Long.MIN_VALUE) {
+                setLegacyTickingTicket(serverLevel, ticketCenter, false);
                 setSimulationRegionTicket(
                         serverLevel,
                         new ChunkPos(ticketCenter),
@@ -1310,15 +1532,29 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         releaseSearchTickets();
     }
 
+    private boolean pickupFrozen() {
+        return isNoAi() && runtimeState == WorkerRuntimeState.STOPPING;
+    }
+
     public boolean requestSearchTicket(ChunkPos chunk) {
-        if (!(level() instanceof ServerLevel serverLevel)) return false;
+        if (!job.activelyWorks() || chunk == null || !(level() instanceof ServerLevel serverLevel)) return false;
         long packed = chunk.toLong();
-        return workerTicketChunks.contains(packed)
-                && serverLevel.getChunkSource().getChunkNow(chunk.x, chunk.z) != null;
+        if (workerTicketChunks.contains(packed)) {
+            return serverLevel.getChunkSource().getChunkNow(chunk.x, chunk.z) != null;
+        }
+        if (searchTicketChunks.contains(packed)) return true;
+        if (searchTicketChunks.size() >= MAX_SEARCH_TICKETS) return false;
+        if (!BaritoneHelper.SEARCH_TICKETS.forceChunk(
+                serverLevel, getUUID(), chunk.x, chunk.z, true, true)) return false;
+        searchTicketChunks.add(packed);
+        return true;
     }
 
     public void releaseSearchTicket(ChunkPos chunk) {
-        searchTicketChunks.remove(chunk.toLong());
+        if (chunk == null || !(level() instanceof ServerLevel serverLevel)
+                || !searchTicketChunks.remove(chunk.toLong())) return;
+        BaritoneHelper.SEARCH_TICKETS.forceChunk(
+                serverLevel, getUUID(), chunk.x, chunk.z, false, true);
     }
 
     private void releaseSearchTickets() {
@@ -1478,41 +1714,22 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     }
 
     private void dismiss(Player player) {
-        if (player instanceof ServerPlayer serverPlayer) {
-            serverPlayer.getData(BaritoneHelper.ACTIVE_WORKER).clear();
-            WorkerMessages.send(
-                    serverPlayer,
-                    ChatFormatting.GREEN,
-                    "message.baritonehelper.dismissed");
-        }
-
-        stopJob();
-        releaseInventoryOnce();
-        ItemStack helperItem = new ItemStack(BaritoneHelper.BARITONE_HELPER.get());
-        if (!player.getInventory().add(helperItem)) {
-            player.drop(helperItem, false);
-        }
-
-        releaseWorkerTickets();
-        discard();
-        gameEvent(GameEvent.ENTITY_DISMOUNT, player);
-    }
-
-    private void releaseInventoryOnce() {
-        for (int slot = 0; slot < EXPANDED_SLOTS; slot++) {
-            ItemStack stack = items.get(slot);
-            if (!stack.isEmpty()) {
-                spawnAtLocation(stack.copy());
-                items.set(slot, ItemStack.EMPTY);
-            }
-        }
-        setChanged();
+        if (!(player instanceof ServerPlayer serverPlayer)) return;
+        WorkerPickupService.Result result = WorkerPickupService.pickup(
+                serverPlayer, this, UUID.randomUUID());
+        WorkerMessages.send(
+                serverPlayer,
+                result.success() ? ChatFormatting.GREEN : ChatFormatting.RED,
+                result.success()
+                        ? "message.baritonehelper.dismissed"
+                        : "message.baritonehelper.pickup_failed");
+        if (result.success()) gameEvent(GameEvent.ENTITY_DISMOUNT, player);
     }
 
     @Override
     public void remove(Entity.RemovalReason reason) {
         disposeBaritoneEngine();
-        if (reason.shouldDestroy()) releaseWorkerTickets();
+        releaseWorkerTickets();
         super.remove(reason);
     }
 
@@ -1623,6 +1840,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         tag.putString("WorkerJob", job.name());
         tag.putString("BlockReason", blockReason.name());
         tag.putInt("ConfigurationRevision", configurationRevision);
+        tag.putLong("DashboardStateSequence", dashboardStateSequence);
         tag.putString("RuntimeState", runtimeState.name());
         tag.putString("ResumeNote", resumeNote);
         ListTag history = new ListTag();
@@ -1646,11 +1864,40 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         tag.putLongArray(
                 "WorkerSimulationTicketChunks",
                 simulationTicketChunks.stream().mapToLong(Long::longValue).toArray());
+        if (ticketCenter != Long.MIN_VALUE) {
+            tag.putLong("WorkerTicketCenter", ticketCenter);
+            tag.putInt("WorkerSimulationRadius", ticketSimulationRadius);
+        }
+        tag.putLongArray(
+                "SearchTicketChunks",
+                searchTicketChunks.stream().mapToLong(Long::longValue).toArray());
     }
 
     @Override
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
+        if (level() instanceof ServerLevel serverLevel) {
+            for (long packed : tag.getLongArray("WorkerTicketChunks")) {
+                setViewTicket(serverLevel, packed, false);
+                setLegacyTickingTicket(serverLevel, packed, false);
+                setPersistentAnchor(serverLevel, packed, false);
+            }
+            for (long packed : tag.getLongArray("SearchTicketChunks")) {
+                ChunkPos chunk = new ChunkPos(packed);
+                BaritoneHelper.SEARCH_TICKETS.forceChunk(
+                        serverLevel, getUUID(), chunk.x, chunk.z, false, true);
+            }
+            if (tag.contains("WorkerTicketCenter", Tag.TAG_LONG)) {
+                long savedCenter = tag.getLong("WorkerTicketCenter");
+                int savedRadius = Math.max(0, tag.getInt("WorkerSimulationRadius"));
+                setLegacyTickingTicket(serverLevel, savedCenter, false);
+                setSimulationRegionTicket(serverLevel, new ChunkPos(savedCenter), savedRadius, false);
+                setPersistentAnchor(serverLevel, savedCenter, false);
+            }
+        }
+        // Forced chunks are owned by the running server, never by saved NBT.
+        // Remove any tickets from a live replacement before restoring state.
+        releaseWorkerTickets();
         setInvulnerable(true);
         clearContent();
         ContainerHelper.loadAllItems(tag, items, level().registryAccess());
@@ -1659,6 +1906,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         job = WorkerJob.fromSerialized(tag.getString("WorkerJob"));
         blockReason = WorkerBlockReason.fromSerialized(tag.getString("BlockReason"));
         configurationRevision = Math.max(0, tag.getInt("ConfigurationRevision"));
+        dashboardStateSequence = Math.max(0L, tag.getLong("DashboardStateSequence"));
         resumeNote = tag.getString("ResumeNote");
         activityHistory.clear();
         ListTag history = tag.getList("ActivityHistory", Tag.TAG_STRING);
@@ -1726,11 +1974,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
 
         workerTicketChunks.clear();
-        Arrays.stream(tag.getLongArray("WorkerTicketChunks"))
-                .forEach(workerTicketChunks::add);
         simulationTicketChunks.clear();
-        Arrays.stream(tag.getLongArray("WorkerSimulationTicketChunks"))
-                .forEach(simulationTicketChunks::add);
         ticketsConfirmed = false;
         ticketCenter = Long.MIN_VALUE;
         ticketSimulationRadius = -1;

@@ -103,7 +103,9 @@ public final class BaritoneHelper {
             TicketType.create(MOD_ID + ":worker_simulation", UUID::compareTo);
     public static final TicketController SEARCH_TICKETS =
             new TicketController(
-                    ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_search"));
+                    ResourceLocation.fromNamespaceAndPath(MOD_ID, "baritone_helper_search"),
+                    (level, tickets) -> tickets.getEntityTickets().keySet()
+                            .forEach(tickets::removeAllTickets));
 
     public BaritoneHelper(IEventBus modBus) {
         ENTITIES.register(modBus);
@@ -112,6 +114,7 @@ public final class BaritoneHelper {
         LEGACY_ITEMS.register(modBus);
         MENUS.register(modBus);
         ATTACHMENTS.register(modBus);
+        BaritoneHelperDataComponents.DATA_COMPONENTS.register(modBus);
         modBus.addListener(this::attributes);
         modBus.addListener(this::creativeTab);
         modBus.addListener(this::registerTicketController);

@@ -5,6 +5,7 @@ public enum WorkerBlockReason {
     NO_TARGET("reason.baritonehelper.no_target"),
     TARGET_EXCLUDED("reason.baritonehelper.target_excluded"),
     NO_MATCHING_BLOCKS("reason.baritonehelper.no_matching_blocks"),
+    SEARCH_AREA_UNREACHABLE("reason.baritonehelper.search_area_unreachable"),
     NO_REACHABLE_POSITION("reason.baritonehelper.no_reachable_position"),
     NAVIGATION_FAILED("reason.baritonehelper.navigation_failed"),
     STUCK("reason.baritonehelper.stuck"),

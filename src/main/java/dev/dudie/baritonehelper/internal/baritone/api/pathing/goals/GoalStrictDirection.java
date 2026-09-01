@@ -70,4 +70,19 @@ public class GoalStrictDirection implements Goal {
          SettingsUtil.maybeCensor(this.dz)
       );
    }
+
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      GoalStrictDirection goal = (GoalStrictDirection)other;
+      return this.x == goal.x && this.y == goal.y && this.z == goal.z
+            && this.dx == goal.dx && this.dz == goal.dz;
+   }
+
+   @Override
+   public int hashCode() {
+      int result = 31 * (31 * this.x + this.y) + this.z;
+      return 31 * (31 * result + this.dx) + this.dz;
+   }
 }

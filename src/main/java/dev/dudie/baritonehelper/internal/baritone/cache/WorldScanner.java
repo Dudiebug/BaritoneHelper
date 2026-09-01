@@ -17,20 +17,27 @@
 
 package dev.dudie.baritonehelper.internal.baritone.cache;
 
+import dev.dudie.baritonehelper.internal.baritone.InternalBaritoneRuntime;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.worker.SearchMode;
 import dev.dudie.baritonehelper.internal.baritone.api.IBaritone;
 import dev.dudie.baritonehelper.internal.baritone.api.cache.IWorldScanner;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.BetterBlockPos;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.BlockUtils;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.BlockOptionalMetaLookup;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.IEntityContext;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.WeakHashMap;
 import java.util.stream.IntStream;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -47,6 +54,11 @@ public enum WorldScanner implements IWorldScanner {
    INSTANCE;
 
    public static final int SECTION_HEIGHT = 16;
+   /** Maximum immutable chunk snapshots copied and later published by one server tick. */
+   public static final int CAPTURE_CHUNK_BUDGET = 1;
+   /** MineProcess requests a scan every five ticks; retain a queued turn across that cadence. */
+   static final int CAPTURE_WAITER_STALE_TICKS = 20;
+   private static final Map<ServerLevel, CaptureBudget> CAPTURE_BUDGETS = new WeakHashMap<>();
 
    @Override
    public List<BlockPos> scanChunkRadius(IEntityContext ctx, BlockOptionalMetaLookup filter, int max, int yLevelThreshold, int maxSearchRadius) {
@@ -55,7 +67,16 @@ public enum WorldScanner implements IWorldScanner {
       }
 
       ScanSnapshot snapshot = this.capture(ctx, filter, maxSearchRadius);
-      return this.scanSnapshot(snapshot, filter, max, yLevelThreshold);
+      try {
+         List<BlockPos> result = this.scanSnapshot(snapshot, filter, max, yLevelThreshold);
+         Set<Long> rejectedChunks = snapshot.publishTargetScans();
+         result.removeIf(position -> rejectedChunks.contains(
+               ChunkPos.asLong(position.getX() >> 4, position.getZ() >> 4)));
+         return result;
+      } catch (Throwable error) {
+         snapshot.abortTargetScans();
+         throw error;
+      }
    }
 
    /**
@@ -78,16 +99,41 @@ public enum WorldScanner implements IWorldScanner {
       ChunkSource chunkSource = world.getChunkSource();
       ArrayList<ChunkSnapshot> chunks = new ArrayList<>();
       Set<Long> loadedWindow = loadedWindow(ctx);
+      WorldData worldData = worldData(ctx);
+      Set<String> targets = targetNames(filter);
+      Map<Long, Map<String, Long>> begun = new HashMap<>();
+      int captureBudget = filter == null
+            ? Integer.MAX_VALUE
+            : acquireCaptureBudget(world, ctx.entity().getUUID());
+      boolean deferred = filter != null && captureBudget == 0;
 
-      for (ChunkPos pos : nearbyChunkPositions(playerChunkX, playerChunkZ, maxSearchRadius, loadedWindow)) {
-         LevelChunk chunk = chunkSource.getChunkNow(pos.x, pos.z);
-         if (chunk != null && !chunk.isEmpty()) {
-            chunks.add(snapshotChunk(chunk, filter, ctx.entity() instanceof WorkerEntity worker ? worker : null));
+      try {
+         for (ChunkPos pos : nearbyChunkPositions(playerChunkX, playerChunkZ, maxSearchRadius, loadedWindow)) {
+            if (chunks.size() >= captureBudget) break;
+            LevelChunk chunk = chunkSource.getChunkNow(pos.x, pos.z);
+            if (chunk == null) continue;
+            Map<String, Long> scanTargets = new HashMap<>();
+            if (targetCoverageEligible(ctx, pos)) {
+               for (String target : targets) {
+                  long revision = worldData == null ? 0L : worldData.beginTargetScan(target, pos.toLong());
+                  if (revision >= 0L) scanTargets.put(target, revision);
+               }
+            }
+            if (!scanTargets.isEmpty()) begun.put(pos.toLong(), Map.copyOf(scanTargets));
+            if (filter == null || !scanTargets.isEmpty()) chunks.add(snapshotChunk(chunk, filter, scanTargets));
          }
+      } catch (Throwable error) {
+         if (worldData != null) begun.forEach((chunk, leases) -> leases.forEach(
+               (target, revision) -> worldData.abortTargetScan(target, chunk, revision)));
+         throw error;
       }
 
-      WorldData worldData = worldData(ctx);
-      return new ScanSnapshot(playerPos.getY(), coordinateIterationOrder, List.copyOf(chunks), worldData);
+      return new ScanSnapshot(playerPos.getY(), coordinateIterationOrder, List.copyOf(chunks), worldData, deferred);
+   }
+
+   private static int acquireCaptureBudget(ServerLevel world, UUID owner) {
+      CaptureBudget budget = CAPTURE_BUDGETS.computeIfAbsent(world, ignored -> new CaptureBudget());
+      return budget.acquire(owner, world.getGameTime());
    }
 
    /** Scans a previously captured snapshot without touching the live world. */
@@ -145,8 +191,8 @@ public enum WorldScanner implements IWorldScanner {
             ctx.feetPos().getY(),
             coordinateIterationOrder(world, ctx.feetPos().getY()),
             worldData(ctx),
-            ctx.entity() instanceof WorkerEntity worker ? worker : null,
-            Collections.emptySet());
+            null,
+            Set.of());
       return result;
    }
 
@@ -187,8 +233,8 @@ public enum WorldScanner implements IWorldScanner {
          int playerY,
          int[] coordinateIterationOrder,
          WorldData worldData,
-         WorkerEntity worker,
-         Set<Long> rejectedPositions
+          Map<String, Set<Long>> observations,
+          Set<String> trackedTargets
    ) {
       LevelChunkSection[] sections = chunk.getSections();
       if (sections.length != coordinateIterationOrder.length) {
@@ -219,20 +265,17 @@ public enum WorldScanner implements IWorldScanner {
                result,
                max,
                yLevelThreshold,
-               playerY,
-               foundWithinY,
-               worldData,
-               worker,
-               rejectedPositions);
+                playerY,
+                foundWithinY,
+                observations,
+                trackedTargets,
+                null);
          foundWithinY = scan.foundWithinY;
          if (scan.stop) {
             return true;
          }
       }
 
-      if (worldData != null) {
-         worldData.addChunkPosToCache(chunkX >> 4, chunkZ >> 4);
-      }
       return foundWithinY;
    }
 
@@ -268,20 +311,17 @@ public enum WorldScanner implements IWorldScanner {
                result,
                max,
                yLevelThreshold,
-               playerY,
-               foundWithinY,
-               worldData,
-               null,
-               chunk.rejectedPositions);
+                playerY,
+                foundWithinY,
+                chunk.observations,
+                chunk.targets.keySet(),
+                chunk);
          foundWithinY = scan.foundWithinY;
          if (scan.stop) {
             return new ScanChunkResult(foundWithinY, true);
          }
       }
 
-      if (worldData != null) {
-         worldData.addChunkPosToCache(chunk.blockX >> 4, chunk.blockZ >> 4);
-      }
       return new ScanChunkResult(foundWithinY, false);
    }
 
@@ -296,45 +336,47 @@ public enum WorldScanner implements IWorldScanner {
          int max,
          int yLevelThreshold,
          int playerY,
-         boolean foundWithinY,
-         WorldData worldData,
-         WorkerEntity worker,
-         Set<Long> rejectedPositions
+          boolean foundWithinY,
+          Map<String, Set<Long>> observations,
+          Set<String> trackedTargets,
+          ChunkSnapshot counter
    ) {
       int yBase = minBuildHeight + (sectionIndex << 4);
       for (int y = 0; y < 16; y++) {
+          if (Thread.currentThread().isInterrupted()) {
+             InternalBaritoneRuntime.recordScanCancellation();
+             throw new java.util.concurrent.CancellationException("Chunk scan cancelled");
+          }
          for (int z = 0; z < 16; z++) {
             for (int x = 0; x < 16; x++) {
+               if (counter != null) counter.positionsExamined++;
                BlockState state = states.get(x, y, z);
                if (!filter.has(state)) {
                   continue;
                }
 
-               int realY = yBase | y;
-               BlockPos pos = new BlockPos(chunkX | x, realY, chunkZ | z);
-               if (rejectedPositions.contains(pos.asLong()) || worker != null && !worker.canModifyAt(pos)) {
-                  continue;
-               }
-               if (worldData != null) {
-                  worldData.addBlockPosToCache(BlockUtils.blockToString(state.getBlock()), pos);
-               }
-               if (result.size() >= max) {
-                  if (Math.abs(realY - playerY) < yLevelThreshold) {
-                     foundWithinY = true;
-                  } else if (foundWithinY) {
-                     return new ScanSectionResult(true, true);
-                  }
-               }
-               result.add(pos);
+                int realY = yBase | y;
+                BlockPos pos = new BlockPos(chunkX | x, realY, chunkZ | z);
+                String target = BlockUtils.blockToString(state.getBlock());
+                if (observations != null && trackedTargets.contains(target)) {
+                   observations.computeIfAbsent(target, ignored -> new HashSet<>()).add(pos.asLong());
+                }
+                if (result.size() >= max) {
+                   if (Math.abs(realY - playerY) < yLevelThreshold) {
+                      foundWithinY = true;
+                   }
+                   continue;
+                }
+                result.add(pos);
             }
          }
       }
       return new ScanSectionResult(foundWithinY, false);
    }
 
-   private static ChunkSnapshot snapshotChunk(ChunkAccess chunk, BlockOptionalMetaLookup filter, WorkerEntity worker) {
+   private static ChunkSnapshot snapshotChunk(
+         ChunkAccess chunk, BlockOptionalMetaLookup filter, Map<String, Long> targets) {
       ArrayList<PalettedContainer<BlockState>> sections = new ArrayList<>(chunk.getSections().length);
-      Set<Long> rejectedPositions = worker == null || filter == null ? Collections.emptySet() : new HashSet<>();
       for (LevelChunkSection section : chunk.getSections()) {
          if (section == null || section.hasOnlyAir()) {
             sections.add(null);
@@ -347,32 +389,44 @@ public enum WorldScanner implements IWorldScanner {
          }
          PalettedContainer<BlockState> states = source.copy();
          sections.add(states);
-         if (worker != null && filter != null) {
-            int yBase = chunk.getMinBuildHeight() + (sections.size() - 1 << 4);
-            for (int y = 0; y < 16; y++) {
-               for (int z = 0; z < 16; z++) {
-                  for (int x = 0; x < 16; x++) {
-                     if (filter.has(states.get(x, y, z))) {
-                        BlockPos pos = new BlockPos(chunk.getPos().x << 4 | x, yBase | y, chunk.getPos().z << 4 | z);
-                        if (!worker.canModifyAt(pos)) {
-                           rejectedPositions.add(pos.asLong());
-                        }
-                     }
-                  }
-               }
-            }
-         }
       }
       return new ChunkSnapshot(
+            chunk.getPos().toLong(),
             chunk.getPos().x << 4,
             chunk.getPos().z << 4,
             chunk.getMinBuildHeight(),
             Collections.unmodifiableList(sections),
-            Set.copyOf(rejectedPositions));
+            Map.copyOf(targets));
+   }
+
+   private static Set<String> targetNames(BlockOptionalMetaLookup filter) {
+      if (filter == null) return Set.of();
+      Set<String> targets = new HashSet<>();
+      filter.blocks().forEach(meta -> targets.add(BlockUtils.blockToString(meta.getBlock())));
+      return Set.copyOf(targets);
    }
 
    private static Set<Long> loadedWindow(IEntityContext ctx) {
       return ctx.entity() instanceof WorkerEntity worker ? worker.loadedTicketChunks() : null;
+   }
+
+   /** WORK_AREA publishes full-chunk coverage only for chunks intersecting its horizontal bounds. */
+   private static boolean targetCoverageEligible(IEntityContext ctx, ChunkPos chunk) {
+      if (!(ctx.entity() instanceof WorkerEntity worker)
+            || worker.searchMode() == SearchMode.ROAM) {
+         return true;
+      }
+      BlockPos center = worker.workAreaCenter();
+      long dx = center.getX() < chunk.getMinBlockX()
+            ? (long)chunk.getMinBlockX() - center.getX()
+            : center.getX() > chunk.getMaxBlockX()
+               ? (long)center.getX() - chunk.getMaxBlockX() : 0L;
+      long dz = center.getZ() < chunk.getMinBlockZ()
+            ? (long)chunk.getMinBlockZ() - center.getZ()
+            : center.getZ() > chunk.getMaxBlockZ()
+               ? (long)center.getZ() - chunk.getMaxBlockZ() : 0L;
+      long radius = worker.horizontalSearchRadius();
+      return dx * dx + dz * dz <= radius * radius;
    }
 
    private static WorldData worldData(IEntityContext ctx) {
@@ -456,33 +510,112 @@ public enum WorldScanner implements IWorldScanner {
       private final int[] coordinateIterationOrder;
       private final List<ChunkSnapshot> chunks;
       private final WorldData worldData;
+      private final boolean deferred;
 
-      private ScanSnapshot(int playerY, int[] coordinateIterationOrder, List<ChunkSnapshot> chunks, WorldData worldData) {
+      private ScanSnapshot(
+            int playerY,
+            int[] coordinateIterationOrder,
+            List<ChunkSnapshot> chunks,
+            WorldData worldData,
+            boolean deferred) {
          this.playerY = playerY;
          this.coordinateIterationOrder = coordinateIterationOrder.clone();
          this.chunks = chunks;
          this.worldData = worldData;
+         this.deferred = deferred;
+      }
+
+      /** True when another worker owns this tick's capture slot. */
+      public boolean deferred() {
+         return this.deferred;
+      }
+
+      public Set<Long> publishTargetScans() {
+         if (this.worldData == null) return Set.of();
+         Set<Long> rejectedChunks = new HashSet<>();
+         for (ChunkSnapshot chunk : this.chunks) {
+            for (Map.Entry<String, Long> target : chunk.targets.entrySet()) {
+               boolean accepted = this.worldData.publishTargetScan(
+                     target.getKey(),
+                     chunk.chunk,
+                     target.getValue(),
+                     chunk.observations.getOrDefault(target.getKey(), Set.of()));
+               if (!accepted) rejectedChunks.add(chunk.chunk);
+            }
+         }
+         return Set.copyOf(rejectedChunks);
+      }
+
+      public void abortTargetScans() {
+         if (this.worldData == null) return;
+         for (ChunkSnapshot chunk : this.chunks) {
+            for (Map.Entry<String, Long> target : chunk.targets.entrySet()) {
+               this.worldData.abortTargetScan(target.getKey(), chunk.chunk, target.getValue());
+            }
+         }
+      }
+
+      /** True when capture acquired at least one current lease for this target. */
+      public boolean hasTargetScans(String target) {
+         if (target == null || target.isBlank()) return false;
+         return this.chunks.stream().anyMatch(chunk -> chunk.targets.containsKey(target));
+      }
+
+      public int chunkCount() {
+         return this.chunks.size();
+      }
+
+      public int targetChunkCount(String target) {
+         if (target == null || target.isBlank()) return 0;
+         return (int)this.chunks.stream().filter(chunk -> chunk.targets.containsKey(target)).count();
+      }
+
+      public int capturedPositionCount() {
+         long positions = this.chunks.stream().mapToLong(chunk -> chunk.positionsExamined).sum();
+         return (int)Math.min(Integer.MAX_VALUE, positions);
+      }
+
+      public int observedPositionCount() {
+         long positions = this.chunks.stream()
+               .flatMap(chunk -> chunk.observations.values().stream())
+               .flatMap(Set::stream)
+               .distinct()
+               .count();
+         return (int)Math.min(Integer.MAX_VALUE, positions);
+      }
+
+      public String lastTargetChunk() {
+         for (int index = this.chunks.size() - 1; index >= 0; index--) {
+            ChunkSnapshot chunk = this.chunks.get(index);
+            if (!chunk.targets.isEmpty()) return new ChunkPos(chunk.chunk).toString();
+         }
+         return "";
       }
    }
 
    private static final class ChunkSnapshot {
+      private final long chunk;
       private final int blockX;
       private final int blockZ;
       private final int minBuildHeight;
       private final List<PalettedContainer<BlockState>> sections;
-      private final Set<Long> rejectedPositions;
+      private final Map<String, Long> targets;
+      private final Map<String, Set<Long>> observations = new HashMap<>();
+      private int positionsExamined;
 
       private ChunkSnapshot(
+            long chunk,
             int blockX,
             int blockZ,
             int minBuildHeight,
             List<PalettedContainer<BlockState>> sections,
-            Set<Long> rejectedPositions) {
+            Map<String, Long> targets) {
+         this.chunk = chunk;
          this.blockX = blockX;
          this.blockZ = blockZ;
          this.minBuildHeight = minBuildHeight;
          this.sections = sections;
-         this.rejectedPositions = rejectedPositions;
+         this.targets = targets;
       }
    }
 
@@ -490,5 +623,36 @@ public enum WorldScanner implements IWorldScanner {
    }
 
    private record ScanChunkResult(boolean foundWithinY, boolean stop) {
+   }
+
+   /** Per-level FIFO arbitration prevents one early-ticking worker from starving the rest. */
+   static final class CaptureBudget {
+      private final ArrayDeque<UUID> waiters = new ArrayDeque<>();
+      private final Set<UUID> queued = new HashSet<>();
+      private final Map<UUID, Long> lastSeen = new HashMap<>();
+      private long tick = Long.MIN_VALUE;
+      private int used;
+
+      int acquire(UUID owner, long currentTick) {
+         if (this.tick != currentTick) {
+            this.tick = currentTick;
+            this.used = 0;
+            while (!this.waiters.isEmpty()
+                  && this.lastSeen.getOrDefault(this.waiters.peekFirst(), Long.MIN_VALUE)
+                        < currentTick - CAPTURE_WAITER_STALE_TICKS) {
+               UUID stale = this.waiters.removeFirst();
+               this.queued.remove(stale);
+               this.lastSeen.remove(stale);
+            }
+         }
+         this.lastSeen.put(owner, currentTick);
+         if (this.queued.add(owner)) this.waiters.addLast(owner);
+         if (this.used >= CAPTURE_CHUNK_BUDGET || !owner.equals(this.waiters.peekFirst())) return 0;
+         this.waiters.removeFirst();
+         this.queued.remove(owner);
+         this.lastSeen.remove(owner);
+         this.used++;
+         return CAPTURE_CHUNK_BUDGET;
+      }
    }
 }

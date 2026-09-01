@@ -29,8 +29,14 @@ import dev.dudie.baritonehelper.internal.baritone.utils.ToolSet;
 import dev.dudie.baritonehelper.internal.baritone.utils.accessor.ILivingEntityAccessor;
 import dev.dudie.baritonehelper.internal.baritone.InternalEnchantmentUtils;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.worker.NoWorkZone;
+import dev.dudie.baritonehelper.worker.NoWorkZoneMode;
+import dev.dudie.baritonehelper.worker.SearchMode;
+import java.util.List;
+import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.BlockPos.MutableBlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
@@ -43,6 +49,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -62,6 +69,7 @@ public class CalculationContext {
    public final boolean canSprint;
    protected final double placeBlockCost;
    public final boolean allowBreak;
+   public final List<Block> allowBreakAnyway;
    public final boolean allowParkour;
    public final boolean allowParkourPlace;
    public final boolean allowJumpAt256;
@@ -89,6 +97,8 @@ public class CalculationContext {
    public final boolean allowSwimming;
    private final int airIncreaseOnLand;
    private final int airDecreaseInWater;
+   @Nullable
+   private final WorkerPolicy workerPolicy;
 
    public CalculationContext(IBaritone baritone) {
       this(baritone, false);
@@ -98,6 +108,8 @@ public class CalculationContext {
       this.safeForThreadedUse = forUseOnAnotherThread;
       this.baritone = baritone;
       LivingEntity entity = baritone.getEntityContext().entity();
+      this.workerPolicy = entity instanceof WorkerEntity worker
+            ? WorkerPolicy.capture(worker, baritone.getEntityContext().world()) : null;
       this.player = entity instanceof IInventoryProvider ? (IInventoryProvider)entity : null;
       this.world = baritone.getEntityContext().world();
       this.worldData = (WorldData)baritone.getWorldProvider().getCurrentWorld();
@@ -113,6 +125,7 @@ public class CalculationContext {
       this.canSprint = this.player != null && baritone.settings().allowSprint.get();
       this.placeBlockCost = baritone.settings().blockPlacementPenalty.get();
       this.allowBreak = baritone.settings().allowBreak.get();
+      this.allowBreakAnyway = List.copyOf(baritone.settings().allowBreakAnyway.get());
       this.allowParkour = baritone.settings().allowParkour.get();
       this.allowParkourPlace = baritone.settings().allowParkourPlace.get();
       this.allowJumpAt256 = baritone.settings().allowJumpAt256.get();
@@ -178,15 +191,16 @@ public class CalculationContext {
       if (!this.hasThrowaway) {
          return 1000000.0;
       } else {
-         return this.isProtected(x, y, z) ? 1000000.0 : this.placeBlockCost;
+         return this.isProtected(x, y, z) || !this.bsi.worldBorder.canPlaceAt(x, z)
+               ? 1000000.0 : this.placeBlockCost;
       }
    }
 
    public double breakCostMultiplierAt(int x, int y, int z, BlockState current) {
-      if (!this.allowBreak) {
+      if (!this.allowBreak && !this.allowBreakAnyway.contains(current.getBlock())) {
          return 1000000.0;
       } else {
-         return this.isProtected(x, y, z) ? 1000000.0 : 1.0;
+         return this.isProtected(x, y, z) || !this.bsi.worldBorder.canPlaceAt(x, z) ? 1000000.0 : 1.0;
       }
    }
 
@@ -208,27 +222,85 @@ public class CalculationContext {
 
    public boolean isProtected(int x, int y, int z) {
       this.blockPos.set(x, y, z);
-      if (this.baritone.getEntityContext().entity() instanceof WorkerEntity worker) {
-         BlockPos position = this.blockPos;
-         if (worker.isInsideNoModify(position) || worker.isInsideNoEnter(position)) return true;
-         if (worker.storagePosition().filter(position::equals).isPresent()) return true;
-         if (!worker.workAreaDimension().isBlank()
-               && !worker.workAreaDimension().equals(this.world.dimension().location().toString())) return true;
-         long dx = (long) x - worker.workAreaCenter().getX();
-         long dz = (long) z - worker.workAreaCenter().getZ();
-         if (dx * dx + dz * dz > (long) worker.horizontalSearchRadius() * worker.horizontalSearchRadius()
-               || Math.abs(y - worker.workAreaCenter().getY()) > worker.verticalSearchRadius()) return true;
-      }
-
-      return false;
+      return this.workerPolicy != null
+            && !this.workerPolicy.canModify(this.blockPos, this.bsi.get0(x, y, z));
    }
 
-   /** NO_ENTER zones are forbidden movement nodes, not merely modification costs. */
+   /** Work-area and NO_ENTER policy govern every movement node. */
    public boolean isNoEnter(int x, int y, int z) {
-      if (this.baritone.getEntityContext().entity() instanceof WorkerEntity worker) {
-         return worker.isInsideNoEnter(new BlockPos(x, y, z));
+      return this.workerPolicy != null && !this.workerPolicy.canEnter(new BlockPos(x, y, z));
+   }
+
+   /** Immutable server-thread policy capture safe for asynchronous A*. */
+   private record WorkerPolicy(
+         String dimension,
+         SearchMode searchMode,
+         String workAreaDimension,
+         BlockPos workAreaCenter,
+         int horizontalRadius,
+         int verticalRadius,
+         BlockPos storagePosition,
+         Set<net.minecraft.resources.ResourceLocation> exclusions,
+         List<ZonePolicy> zones,
+         boolean mobGriefing) {
+
+      static WorkerPolicy capture(WorkerEntity worker, Level world) {
+         return new WorkerPolicy(
+               world.dimension().location().toString(),
+               worker.searchMode(),
+               worker.workAreaDimension(),
+               worker.workAreaCenter().immutable(),
+               worker.horizontalSearchRadius(),
+               worker.verticalSearchRadius(),
+               worker.storagePosition().map(BlockPos::immutable).orElse(null),
+               Set.copyOf(worker.exclusions()),
+               worker.noWorkZones().stream().map(ZonePolicy::capture).toList(),
+               world.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING));
       }
-      return false;
+
+      boolean canEnter(BlockPos position) {
+         if (!workAreaDimension.isBlank() && !workAreaDimension.equals(dimension)) return false;
+         for (ZonePolicy zone : zones) {
+            if (zone.mode == NoWorkZoneMode.NO_ENTER && zone.contains(dimension, position)) return false;
+         }
+         if (searchMode == SearchMode.ROAM) return true;
+         long dx = (long)position.getX() - workAreaCenter.getX();
+         long dz = (long)position.getZ() - workAreaCenter.getZ();
+         return dx * dx + dz * dz <= (long)horizontalRadius * horizontalRadius
+               && Math.abs(position.getY() - workAreaCenter.getY()) <= verticalRadius;
+      }
+
+      boolean canModify(BlockPos position, BlockState state) {
+         if (!canEnter(position) || !mobGriefing
+               || storagePosition != null && storagePosition.equals(position)
+               || exclusions.contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()))
+               || state.hasBlockEntity()) return false;
+         for (ZonePolicy zone : zones) {
+            if (zone.contains(dimension, position)) return false;
+         }
+         return true;
+      }
+   }
+
+   private record ZonePolicy(
+         String dimension,
+         BlockPos center,
+         int horizontalRadius,
+         int verticalRadius,
+         NoWorkZoneMode mode,
+         boolean enabled) {
+      static ZonePolicy capture(NoWorkZone zone) {
+         return new ZonePolicy(zone.dimension(), zone.center().immutable(), zone.horizontalRadius(),
+               zone.verticalRadius(), zone.mode(), zone.enabled());
+      }
+
+      boolean contains(String currentDimension, BlockPos position) {
+         if (!enabled || !dimension.equals(currentDimension)) return false;
+         long dx = (long)position.getX() - center.getX();
+         long dz = (long)position.getZ() - center.getZ();
+         return dx * dx + dz * dz <= (long)horizontalRadius * horizontalRadius
+               && Math.abs(position.getY() - center.getY()) <= verticalRadius;
+      }
    }
 
    public double oxygenCost(double baseCost, BlockState headState) {

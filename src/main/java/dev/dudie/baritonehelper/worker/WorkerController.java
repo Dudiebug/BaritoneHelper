@@ -2,6 +2,7 @@ package dev.dudie.baritonehelper.worker;
 
 import dev.dudie.baritonehelper.entity.WorkerEntity;
 import dev.dudie.baritonehelper.internal.baritone.api.behavior.PathingStatus;
+import dev.dudie.baritonehelper.internal.baritone.process.MineProcess;
 import java.util.Optional;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -50,6 +51,7 @@ public final class WorkerController {
             };
             worker.stopEngineProcesses();
             clearPlan(false);
+            worker.releaseWorkerTickets();
             return;
         }
 
@@ -68,26 +70,24 @@ public final class WorkerController {
     public int replanAttempts() { return replanAttempts; }
     public int lastProgressAgeTicks() { return lastProgressAgeTicks; }
 
-    // These accessors remain part of the dashboard payload while discovery is
-    // owned by MineProcess rather than by a controller-side scan cursor.
-    public int chunksExamined() { return 0; }
-    public int chunksScanned() { return 0; }
-    public int positionsExamined() { return 0; }
-    public int matchingBlocks() { return 0; }
-    public int candidatesFound() { return 0; }
-    public int candidatesRejectedByPolicy() { return 0; }
-    public int candidatesRejectedAsUnreachable() { return 0; }
-    public int cachedCandidateCount() { return 0; }
-    public int frontierIndex() { return 0; }
-    public int frontierSize() { return 0; }
-    public boolean waitingForSearchChunk() { return false; }
+    public int chunksExamined() { return worker.searchTelemetry().chunksExamined(); }
+    public int chunksScanned() { return worker.searchTelemetry().chunksScanned(); }
+    public int positionsExamined() { return worker.searchTelemetry().positionsExamined(); }
+    public int matchingBlocks() { return worker.searchTelemetry().matchingBlocks(); }
+    public int candidatesFound() { return worker.searchTelemetry().candidatesFound(); }
+    public int candidatesRejectedByPolicy() { return worker.searchTelemetry().candidatesRejectedByPolicy(); }
+    public int candidatesRejectedAsUnreachable() { return worker.searchTelemetry().candidatesRejectedAsUnreachable(); }
+    public int cachedCandidateCount() { return worker.searchTelemetry().cachedCandidates(); }
+    public int frontierIndex() { return worker.searchTelemetry().frontierIndex(); }
+    public int frontierSize() { return worker.searchTelemetry().frontierSize(); }
+    public boolean waitingForSearchChunk() { return worker.searchTelemetry().waitingForSearchChunk(); }
     public boolean pathRequested() { return pathRequested; }
     public Optional<BlockPos> lastNavigationDestination() {
         return Optional.ofNullable(lastNavigationDestination);
     }
-    public String lastScannedChunk() { return ""; }
-    public String requestedSearchChunk() { return ""; }
-    public long maxSearchTickNanos() { return 0L; }
+    public String lastScannedChunk() { return worker.searchTelemetry().lastScannedChunk(); }
+    public String requestedSearchChunk() { return worker.searchTelemetry().requestedSearchChunk(); }
+    public long maxSearchTickNanos() { return worker.searchTelemetry().maxCaptureNanos(); }
 
     public void resetTransientState() {
         worker.stopEngineProcesses();
@@ -144,6 +144,14 @@ public final class WorkerController {
             return;
         }
 
+        MineProcess.SearchOutcome searchOutcome = worker.mineSearchOutcome();
+        if (searchOutcome != MineProcess.SearchOutcome.ACTIVE) {
+            block(searchOutcome == MineProcess.SearchOutcome.SEARCH_AREA_UNREACHABLE
+                    ? WorkerBlockReason.SEARCH_AREA_UNREACHABLE
+                    : WorkerBlockReason.NO_MATCHING_BLOCKS);
+            return;
+        }
+
         if (!worker.mineProcessActive()) {
             PathingStatus status = worker.pathingStatus();
             block(status == PathingStatus.NO_PATH || status == PathingStatus.FAILED
@@ -195,12 +203,16 @@ public final class WorkerController {
             block(WorkerBlockReason.STORAGE_WRONG_DIMENSION);
             return;
         }
-        if (worker.isInsideNoEnter(storage) || worker.isInsideNoModify(storage)) {
+        if (!worker.canEnterAt(storage) || worker.isInsideNoModify(storage)) {
             block(WorkerBlockReason.STORAGE_IN_NO_WORK_ZONE);
             return;
         }
         if (!(level.getBlockEntity(storage) instanceof Container destination)) {
             block(WorkerBlockReason.STORAGE_MISSING);
+            return;
+        }
+        if (!worker.canStoreAt(storage)) {
+            block(WorkerBlockReason.STORAGE_IN_NO_WORK_ZONE);
             return;
         }
         if (currentTarget == null || !currentTarget.equals(storage)) {
@@ -218,6 +230,11 @@ public final class WorkerController {
             }
         }
 
+        if (!worker.canEnterAt(currentWorkPosition)) {
+            block(WorkerBlockReason.STORAGE_IN_NO_WORK_ZONE);
+            return;
+        }
+
         double distance = distanceTo(currentWorkPosition);
         if (distance > ARRIVAL_DISTANCE_SQUARED || distanceTo(storage) > INTERACTION_DISTANCE_SQUARED
                 || (!closeInteractionFallback && !WorkerPlanner.hasLineOfSight(level, worker, storage))) {
@@ -230,6 +247,10 @@ public final class WorkerController {
 
         activity = WorkerActivity.DEPOSITING;
         worker.setRuntimeState(WorkerRuntimeState.DEPOSITING);
+        if (!worker.canStoreAt(storage)) {
+            block(WorkerBlockReason.STORAGE_IN_NO_WORK_ZONE);
+            return;
+        }
         int moved = WorkerStorage.deposit(worker, destination);
         if (!worker.hasCargo()) {
             if (moved > 0) {

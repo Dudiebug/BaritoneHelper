@@ -2,6 +2,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$sourceState = Join-Path $PSScriptRoot 'source-state.ps1'
+$artifactInspector = Join-Path $PSScriptRoot 'inspect-artifact.ps1'
+$startupCheck = Join-Path $PSScriptRoot 'startup-check.ps1'
+foreach ($requiredTool in @($sourceState, $artifactInspector, $startupCheck)) {
+    if (-not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
+        throw "Required verification tool is missing: $requiredTool"
+    }
+}
+& $sourceState -RequireClean | Out-Host
+
 $javaCommand = $env:BARITONEHELPER_JAVA
 if ([string]::IsNullOrWhiteSpace($javaCommand)) {
     $java = Get-Command java -ErrorAction SilentlyContinue
@@ -61,6 +71,14 @@ try {
     if ($runtimeJars[0].Length -le 0 -or $sourceJars[0].Length -le 0) {
         throw 'Release artifacts must be non-empty.'
     }
+
+    & $artifactInspector -ArtifactPath $runtimeJars[0].FullName | Out-Host
+
+    & $startupCheck `
+        -ArtifactPath $runtimeJars[0].FullName `
+        -CommandPath $env:BARITONEHELPER_CANDIDATE_STARTUP_COMMAND `
+        -CommandArgument $env:BARITONEHELPER_CANDIDATE_STARTUP_ARGUMENT `
+        -ReadyPattern $env:BARITONEHELPER_CANDIDATE_READY_PATTERN | Out-Host
 
     if (Test-Path -LiteralPath 'src/main/java/dev/dudie/buddybot') {
         throw 'Removed buddybot production package is still present.'

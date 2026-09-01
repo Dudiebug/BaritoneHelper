@@ -11,7 +11,7 @@ from these public references:
 - Goodbird-git/PlayerEngine, branch `1.21.1-arch`, commit
   `aa4ad2d5ec2a834107c76cdb58af732acb192ecc`;
 - Cabaletta Baritone, branch `1.21.1`, inspected at commit
-  `5f259b7f1ffaa8dca4cd1207c34bb8fb5e534756`;
+  `f3a51d47a05fa4fc9cacd6d90091f617a8d685df`;
 - Ladysnake/Automatone swimming work, commit
   `1fb7ad155cf4ca7fc846506235da03d6fae4c0e4`.
 
@@ -20,6 +20,11 @@ LLM integrations, client-only UI, and unrelated application features. It is
 relocated to avoid package collisions with separately installed Baritone. The
 corresponding source is included in this repository and the Gradle `sourcesJar`
 artifact. LGPL terms are in `LICENSES/LGPL-3.0.txt`.
+
+The current official `1.21.1` head differs from the earlier `5f259b7` audit by
+one loot-registry fix. Baritone Helper already resolves drops directly from the
+dedicated server's reloadable registries, so the updated behavior is retained
+without importing Baritone's client-only `ServerLevelStub`.
 
 ## NeoForge and Minecraft
 

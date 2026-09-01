@@ -30,5 +30,14 @@ class WorldScannerDiscoveryTest {
         assertTrue(source.contains("ScanSnapshot"));
         assertTrue(source.contains("copy()"));
         assertTrue(source.contains("scanSnapshot"));
+        assertTrue(source.contains("beginTargetScan"));
+        assertTrue(source.contains("publishTargetScans"));
+        assertTrue(source.contains("Set<Long> rejectedChunks"));
+        assertTrue(source.contains("snapshot.abortTargetScans()"));
+        assertTrue(source.contains("removeIf(position -> rejectedChunks.contains"));
+        assertTrue(source.contains("targetCoverageEligible(ctx, pos)"),
+                "WORK_AREA scans must not claim authoritative coverage for unrelated loaded chunks");
+        assertFalse(source.contains("worker.canModifyAt"),
+                "shared observations must remain policy-neutral");
     }
 }

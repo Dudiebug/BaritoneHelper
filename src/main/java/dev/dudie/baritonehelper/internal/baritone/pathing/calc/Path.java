@@ -42,8 +42,11 @@ class Path extends PathBase {
    private final CalculationContext context;
    private volatile boolean verified;
 
-   Path(PathNode start, PathNode end, int numNodes, Goal goal, CalculationContext context) {
-      this.start = new BetterBlockPos(start.x, start.y, start.z);
+   Path(BetterBlockPos realStart, PathNode.Snapshot start, PathNode.Snapshot end, int numNodes, Goal goal, CalculationContext context) {
+      this(realStart, start.toPathNode(goal), end.toPathNode(goal), numNodes, goal, context);
+   }
+
+   Path(BetterBlockPos realStart, PathNode start, PathNode end, int numNodes, Goal goal, CalculationContext context) {
       this.end = new BetterBlockPos(end.x, end.y, end.z);
       this.numNodes = numNodes;
       this.movements = new ArrayList<>();
@@ -58,6 +61,17 @@ class Path extends PathBase {
          tempPath.addFirst(new BetterBlockPos(current.x, current.y, current.z));
       }
 
+      BetterBlockPos startNodePos = new BetterBlockPos(start.x, start.y, start.z);
+      if (!realStart.equals(startNodePos)
+            && start.x == end.x && start.y == end.y && start.z == end.z) {
+         this.start = realStart;
+         PathNode fakeNode = new PathNode(realStart.x, realStart.y, realStart.z, goal);
+         fakeNode.cost = 0.0;
+         tempNodes.addFirst(fakeNode);
+         tempPath.addFirst(realStart);
+      } else {
+         this.start = startNodePos;
+      }
       this.path = new ArrayList<>(tempPath);
       this.nodes = new ArrayList<>(tempNodes);
    }

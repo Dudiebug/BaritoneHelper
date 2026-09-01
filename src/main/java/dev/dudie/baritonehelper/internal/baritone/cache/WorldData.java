@@ -31,11 +31,16 @@ import net.minecraft.world.level.Level;
 public class WorldData implements IWorldData {
    private final WaypointCollection waypoints = new WaypointCollection();
    private final ContainerMemory containerMemory = new ContainerMemory();
-   private final CachedWorld cachedWorld = new CachedWorld();
+   private final CachedWorld cachedWorld;
    public final ResourceKey<Level> dimension;
 
    public WorldData(ResourceKey<Level> dimension) {
+      this(dimension, new CachedWorld());
+   }
+
+   public WorldData(ResourceKey<Level> dimension, CachedWorld cachedWorld) {
       this.dimension = dimension;
+      this.cachedWorld = cachedWorld;
    }
 
    public void readFromNbt(HolderLookup.Provider levelRegistryAccess, CompoundTag tag) {
@@ -77,5 +82,30 @@ public class WorldData implements IWorldData {
       if (block != null) {
          this.cachedWorld.addLocation(block, position);
       }
+   }
+
+   public void markTargetScanned(String block, int chunkX, int chunkZ) {
+      this.cachedWorld.markTargetScanned(block, ChunkPos.asLong(chunkX, chunkZ));
+   }
+
+   public long beginTargetScan(String block, long chunk) {
+      return this.cachedWorld.beginScanRevision(block, chunk);
+   }
+
+   public void publishTargetScan(String block, long chunk, java.util.Collection<Long> locations) {
+      this.cachedWorld.publishScan(block, chunk, locations);
+   }
+
+   public boolean publishTargetScan(
+         String block, long chunk, long expectedRevision, java.util.Collection<Long> locations) {
+      return this.cachedWorld.publishScan(block, chunk, expectedRevision, locations);
+   }
+
+   public void abortTargetScan(String block, long chunk) {
+      this.cachedWorld.abortScan(block, chunk);
+   }
+
+   public void abortTargetScan(String block, long chunk, long expectedRevision) {
+      this.cachedWorld.abortScan(block, chunk, expectedRevision);
    }
 }

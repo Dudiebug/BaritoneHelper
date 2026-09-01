@@ -37,12 +37,13 @@ import java.util.Optional;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Direction.Axis;
-import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.AbstractSkullBlock;
 import net.minecraft.world.level.block.AirBlock;
+import net.minecraft.world.level.block.AmethystClusterBlock;
+import net.minecraft.world.level.block.AzaleaBlock;
 import net.minecraft.world.level.block.BambooStalkBlock;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.Block;
@@ -54,6 +55,8 @@ import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.InfestedBlock;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.PointedDripstoneBlock;
 import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.SkullBlock;
@@ -80,8 +83,10 @@ import net.minecraft.world.phys.HitResult.Type;
 
 public interface MovementHelper extends ActionCosts {
    static boolean avoidBreaking(BlockStateInterface bsi, int x, int y, int z, BlockState state, Settings settings) {
+      if (!bsi.worldBorder.canPlaceAt(x, z)) return true;
       Block b = state.getBlock();
-      return b == Blocks.ICE
+      return settings.blocksToDisallowBreaking.get().contains(b)
+         || b == Blocks.ICE
          || b instanceof InfestedBlock
          || avoidAdjacentBreaking(bsi, x, y + 1, z, true, settings)
          || avoidAdjacentBreaking(bsi, x + 1, y, z, false, settings)
@@ -93,9 +98,17 @@ public interface MovementHelper extends ActionCosts {
    static boolean avoidAdjacentBreaking(BlockStateInterface bsi, int x, int y, int z, boolean directlyAbove, Settings settings) {
       BlockState state = bsi.get0(x, y, z);
       Block block = state.getBlock();
-      return !directlyAbove && block instanceof FallingBlock && settings.avoidUpdatingFallingBlocks.get() && FallingBlock.isFree(bsi.get0(x, y - 1, z))
-         ? true
-         : !state.getFluidState().isEmpty();
+      if (!directlyAbove && block instanceof FallingBlock
+            && settings.avoidUpdatingFallingBlocks.get()
+            && FallingBlock.isFree(bsi.get0(x, y - 1, z))) {
+         return true;
+      }
+      if (block instanceof LiquidBlock) {
+         if (directlyAbove || settings.strictLiquidCheck.get()) return true;
+         int level = state.getValue(LiquidBlock.LEVEL);
+         return level == 0 || !(bsi.get0(x, y - 1, z).getBlock() instanceof LiquidBlock);
+      }
+      return !state.getFluidState().isEmpty();
    }
 
    static boolean canWalkThrough(IEntityContext ctx, BetterBlockPos pos) {
@@ -126,7 +139,13 @@ public interface MovementHelper extends ActionCosts {
          && block != Blocks.GLOW_LICHEN
          && block != Blocks.CAVE_VINES
          && block != Blocks.CAVE_VINES_PLANT
-         && block != Blocks.END_ROD) {
+         && block != Blocks.END_ROD
+         && block != Blocks.SWEET_BERRY_BUSH
+         && block != Blocks.POINTED_DRIPSTONE
+         && !(block instanceof AmethystClusterBlock)
+         && !(block instanceof AzaleaBlock)
+         && block != Blocks.BIG_DRIPLEAF
+         && block != Blocks.POWDER_SNOW) {
          if (settings.blocksToAvoid.get().contains(state.getBlock())) {
             return false;
          } else if (block instanceof DoorBlock || block instanceof FenceGateBlock) {
@@ -139,19 +158,17 @@ public interface MovementHelper extends ActionCosts {
             } else {
                return state.getValue(SnowLayerBlock.LAYERS) >= 3 ? false : canWalkOn(bsi, x, y - 1, z, settings);
             }
-         } else if (isFlowing(x, y, z, state, bsi)) {
-            return false;
-         } else {
-            FluidState fluidState = state.getFluidState();
-            if (!(fluidState.getType() instanceof WaterFluid)) {
-               return state.isPathfindable(PathComputationType.LAND);
-            } else if (settings.assumeWalkOnWater.get()) {
-               return false;
-            } else {
-               BlockState up = bsi.get0(x, y + 1, z);
-               return (settings.allowSwimming.get() || up.getFluidState().isEmpty()) && !(up.getBlock() instanceof WaterlilyBlock);
-            }
          }
+         FluidState fluidState = state.getFluidState();
+         if (!fluidState.isEmpty()) {
+            if (isFlowing(x, y, z, state, bsi) || settings.assumeWalkOnWater.get()) return false;
+            BlockState up = bsi.get0(x, y + 1, z);
+            return up.getFluidState().isEmpty()
+               && !(up.getBlock() instanceof WaterlilyBlock)
+               && fluidState.getType() instanceof WaterFluid;
+         }
+         return !(block instanceof net.minecraft.world.level.block.CauldronBlock)
+            && state.isPathfindable(PathComputationType.LAND);
       } else {
          return false;
       }
@@ -176,6 +193,7 @@ public interface MovementHelper extends ActionCosts {
                && block != Blocks.VINE
                && block != Blocks.LADDER
                && block != Blocks.COCOA
+               && !(block instanceof AzaleaBlock)
                && !(block instanceof DoorBlock)
                && !(block instanceof FenceGateBlock)
                && !(block instanceof SnowLayerBlock)
@@ -249,6 +267,7 @@ public interface MovementHelper extends ActionCosts {
       return !state.getFluidState().isEmpty()
          || block == Blocks.MAGMA_BLOCK
          || block == Blocks.CACTUS
+         || block == Blocks.SWEET_BERRY_BUSH
          || block instanceof BaseFireBlock
          || block == Blocks.END_PORTAL
          || block == Blocks.COBWEB
@@ -257,13 +276,16 @@ public interface MovementHelper extends ActionCosts {
 
    static boolean canWalkOn(BlockStateInterface bsi, int x, int y, int z, BlockState state, Settings settings) {
       Block block = state.getBlock();
-      if (block instanceof AirBlock || block == Blocks.MAGMA_BLOCK || block == Blocks.BUBBLE_COLUMN || block == Blocks.HONEY_BLOCK) {
+      if (block instanceof AirBlock || block == Blocks.BUBBLE_COLUMN || block == Blocks.HONEY_BLOCK) {
          return false;
-      } else if (isBlockNormalCube(state)) {
+      } else if (isBlockNormalCube(state)
+            && (block != Blocks.MAGMA_BLOCK || settings.allowWalkOnMagmaBlocks.get())) {
          return true;
-      } else if (state.is(BlockTags.CLIMBABLE)) {
+      } else if (block instanceof AzaleaBlock) {
          return true;
-      } else if (block == Blocks.FARMLAND || block == Blocks.DIRT_PATH) {
+      } else if (block == Blocks.LADDER || isClimbable(block) && settings.allowVines.get()) {
+         return true;
+      } else if (block == Blocks.FARMLAND || block == Blocks.DIRT_PATH || block == Blocks.SOUL_SAND) {
          return true;
       } else if (block == Blocks.ENDER_CHEST || block == Blocks.CHEST || block == Blocks.TRAPPED_CHEST) {
          return true;
@@ -304,6 +326,15 @@ public interface MovementHelper extends ActionCosts {
       return canWalkOn(bsi, x, y, z, bsi.get0(x, y, z), settings);
    }
 
+   static boolean isClimbable(Block block) {
+      return block == Blocks.LADDER
+         || block == Blocks.VINE
+         || block == Blocks.WEEPING_VINES
+         || block == Blocks.WEEPING_VINES_PLANT
+         || block == Blocks.TWISTING_VINES
+         || block == Blocks.TWISTING_VINES_PLANT;
+   }
+
    static boolean canPlaceAgainst(BlockStateInterface bsi, int x, int y, int z) {
       return canPlaceAgainst(bsi, x, y, z, bsi.get0(x, y, z));
    }
@@ -317,6 +348,7 @@ public interface MovementHelper extends ActionCosts {
    }
 
    static boolean canPlaceAgainst(BlockStateInterface bsi, int x, int y, int z, BlockState state) {
+      if (!bsi.worldBorder.canPlaceAt(x, z)) return false;
       return isBlockNormalCube(state) || state.getBlock() == Blocks.GLASS || state.getBlock() instanceof StainedGlassBlock;
    }
 
@@ -435,7 +467,9 @@ public interface MovementHelper extends ActionCosts {
       if (!(block instanceof BambooStalkBlock)
          && !(block instanceof MovingPistonBlock)
          && !(block instanceof ScaffoldingBlock)
-         && !(block instanceof ShulkerBoxBlock)) {
+         && !(block instanceof ShulkerBoxBlock)
+         && !(block instanceof PointedDripstoneBlock)
+         && !(block instanceof AmethystClusterBlock)) {
          try {
             return state.isCollisionShapeFullBlock(null, BlockPos.ZERO);
          } catch (NullPointerException var3) {
@@ -522,7 +556,7 @@ public interface MovementHelper extends ActionCosts {
    }
 
    static boolean isTransparent(Block b) {
-      return b == Blocks.AIR || b == Blocks.LAVA || b == Blocks.WATER;
+      return b instanceof AirBlock || b == Blocks.LAVA || b == Blocks.WATER;
    }
 
    public static enum PlaceResult {

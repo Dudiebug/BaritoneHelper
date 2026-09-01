@@ -15,7 +15,7 @@ class MineProcessRescanTest {
 
     @Test
     void coalescesRescansByGenerationAndPublishesOnTheServerThread() throws IOException {
-        String source = Files.readString(SOURCE);
+        String source = Files.readString(SOURCE).replace("\r\n", "\n");
 
         assertTrue(source.contains("rescanGeneration"));
         assertTrue(source.contains("rescanInFlight"));
@@ -33,5 +33,19 @@ class MineProcessRescanTest {
                 "an empty unlimited scan must wait instead of restarting MineProcess every tick");
         assertTrue(source.contains("this.blacklist.clear()"),
                 "an exhausted provisional blacklist must permit a later retry");
+        assertTrue(source.contains("snapshot.publishTargetScans()"));
+        assertTrue(source.contains("List.copyOf(this.knownOreLocations)"),
+                "coalesced scans must inherit candidates published by the scan ahead of them");
+        assertTrue(source.contains("snapshot.abortTargetScans()"));
+        assertTrue(source.contains("if (this.rescanPending())"),
+                "frontier exhaustion must wait for the authoritative async cache refresh");
+        assertTrue(source.contains("this.terminalVerificationNeeded = !this.blacklist.isEmpty()"),
+                "path failures need one blacklist-free verification before becoming terminal");
+        assertTrue(source.contains("SearchOutcome.NO_MATCHING_BLOCKS"));
+        assertTrue(source.contains("SearchOutcome.SEARCH_AREA_UNREACHABLE"));
+        assertTrue(source.contains("this.explorationFrontierIndex++"),
+                "a failed worker frontier must advance instead of cancel/restarting the process");
+        assertTrue(source.contains("this.lastGoalWasExploration"),
+                "a stale frontier calculation failure must not blacklist a newly published target");
     }
 }

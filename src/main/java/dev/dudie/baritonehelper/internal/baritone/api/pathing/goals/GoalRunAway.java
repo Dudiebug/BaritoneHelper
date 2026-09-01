@@ -21,6 +21,7 @@ import dev.dudie.baritonehelper.internal.baritone.api.utils.SettingsUtil;
 import it.unimi.dsi.fastutil.doubles.DoubleIterator;
 import it.unimi.dsi.fastutil.doubles.DoubleOpenHashSet;
 import java.util.Arrays;
+import java.util.Objects;
 import net.minecraft.core.BlockPos;
 
 public class GoalRunAway implements Goal {
@@ -93,9 +94,9 @@ public class GoalRunAway implements Goal {
          minX = Math.min(minX, p.getX() - distance);
          minY = Math.min(minY, p.getY() - distance);
          minZ = Math.min(minZ, p.getZ() - distance);
-         maxX = Math.max(minX, p.getX() + distance);
-         maxY = Math.max(minY, p.getY() + distance);
-         maxZ = Math.max(minZ, p.getZ() + distance);
+         maxX = Math.max(maxX, p.getX() + distance);
+         maxY = Math.max(maxY, p.getY() + distance);
+         maxZ = Math.max(maxZ, p.getZ() + distance);
       }
 
       DoubleOpenHashSet maybeAlwaysInside = new DoubleOpenHashSet();
@@ -132,5 +133,21 @@ public class GoalRunAway implements Goal {
       return this.maintainY != null
          ? String.format("GoalRunAwayFromMaintainY y=%s, %s", SettingsUtil.maybeCensor(this.maintainY), Arrays.asList(this.from))
          : "GoalRunAwayFrom" + Arrays.<BlockPos>asList(this.from);
+   }
+
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      GoalRunAway goal = (GoalRunAway)other;
+      return this.distanceSq == goal.distanceSq
+         && Objects.equals(this.maintainY, goal.maintainY)
+         && Arrays.equals(this.from, goal.from);
+   }
+
+   @Override
+   public int hashCode() {
+      int result = Objects.hash(this.distanceSq, this.maintainY);
+      return 31 * result + Arrays.hashCode(this.from);
    }
 }

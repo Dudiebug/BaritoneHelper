@@ -50,6 +50,7 @@ public class ToolSet {
    private final boolean useSwordToMine;
    private final boolean itemSaver;
    private final Set<Block> blocksToAvoidBreaking;
+   private final double avoidBreakingMultiplier;
 
    public ToolSet(LivingEntity player) {
       IBaritone baritone = player instanceof BaritoneEntity holder
@@ -67,6 +68,7 @@ public class ToolSet {
       this.useSwordToMine = baritone.settings().useSwordToMine.get();
       this.itemSaver = baritone.settings().itemSaver.get();
       this.blocksToAvoidBreaking = Set.copyOf(baritone.settings().blocksToAvoidBreaking.get());
+      this.avoidBreakingMultiplier = baritone.settings().avoidBreakingMultiplier.get();
       if (baritone.settings().considerPotionEffects.get()) {
          double amplifier = potionAmplifier(player);
          Function<Double, Double> amplify = x -> amplifier * x;
@@ -148,7 +150,8 @@ public class ToolSet {
    }
 
    private double avoidanceMultiplier(Block b) {
-      return this.blocksToAvoidBreaking.contains(b.builtInRegistryHolder().value()) ? 0.1 : 1.0;
+      return this.blocksToAvoidBreaking.contains(b.builtInRegistryHolder().value())
+            ? this.avoidBreakingMultiplier : 1.0;
    }
 
    public static double calculateSpeedVsBlock(ItemStack item, BlockState state) {

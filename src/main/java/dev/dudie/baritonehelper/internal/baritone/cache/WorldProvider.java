@@ -18,13 +18,16 @@
 package dev.dudie.baritonehelper.internal.baritone.cache;
 
 import dev.dudie.baritonehelper.internal.baritone.api.cache.IWorldProvider;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 
 public class WorldProvider implements IWorldProvider {
    private final WorldData currentWorld;
 
    public WorldProvider(Level world) {
-      this.currentWorld = new WorldData(world.dimension());
+      this.currentWorld = world instanceof ServerLevel serverLevel
+            ? new WorldData(world.dimension(), SharedWorldKnowledge.get(serverLevel).cachedWorld())
+            : new WorldData(world.dimension());
    }
 
    public final WorldData getCurrentWorld() {
