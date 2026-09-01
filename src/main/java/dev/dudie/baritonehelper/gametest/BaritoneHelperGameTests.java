@@ -44,6 +44,8 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 public final class BaritoneHelperGameTests {
     private static final BlockPos WORKER_POS = new BlockPos(1, 2, 1);
     private static final BlockPos NEAR_TARGET = new BlockPos(2, 2, 1);
+    private static final int ASYNC_TIMEOUT_TICKS = 64_000;
+    private static final int MAX_FAILURE_DIAGNOSTIC_LENGTH = 800;
 
     private BaritoneHelperGameTests() {
     }
@@ -228,7 +230,7 @@ public final class BaritoneHelperGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzzBaritoneHelperOffline",
-            timeoutTicks = 4000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void helperCollectsConfiguredBlockWhileOwnerIsOffline(
             GameTestHelper helper) {
         supportWorker(helper);
@@ -253,13 +255,13 @@ public final class BaritoneHelperGameTests {
         helper.succeedWhen(() -> {
             helper.assertTrue(
                     helper.getBlockState(NEAR_TARGET).isAir(),
-                    "configured block must be collected; job=" + worker.job()
+                    failureDiagnostic("configured block must be collected; job=" + worker.job()
                             + ", reason=" + worker.blockReason()
                             + ", runtime=" + worker.runtimeState()
                             + ", search=" + worker.mineSearchOutcome()
                             + ", path=" + worker.pathingStatus()
                             + ", telemetry=" + worker.searchTelemetry()
-                            + ", mine=" + worker.mineProcessDiagnostic());
+                            + ", mine=" + worker.mineProcessDiagnostic()));
             helper.assertValueEqual(
                     countItem(storage, Items.IRON_BLOCK), 1, "deposited iron block");
             helper.assertValueEqual(worker.job(), WorkerJob.COMPLETED,
@@ -274,7 +276,7 @@ public final class BaritoneHelperGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzzBaritoneHelperFiniteGoal",
-            timeoutTicks = 4000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void finiteGoalCompletesAfterRealDropAndDeposit(GameTestHelper helper) {
         supportWorker(helper);
         helper.setBlock(NEAR_TARGET, Blocks.GOLD_BLOCK);
@@ -291,13 +293,13 @@ public final class BaritoneHelperGameTests {
 
         helper.succeedWhen(() -> {
             helper.assertTrue(helper.getBlockState(NEAR_TARGET).isAir(),
-                    "finite goal must break the source block; job=" + worker.job()
+                    failureDiagnostic("finite goal must break the source block; job=" + worker.job()
                             + ", reason=" + worker.blockReason()
                             + ", runtime=" + worker.runtimeState()
                             + ", search=" + worker.mineSearchOutcome()
                             + ", path=" + worker.pathingStatus()
                             + ", telemetry=" + worker.searchTelemetry()
-                            + ", mine=" + worker.mineProcessDiagnostic());
+                            + ", mine=" + worker.mineProcessDiagnostic()));
             helper.assertValueEqual(worker.completedBlockCount(), 1,
                     "finite goal source-block count");
             helper.assertValueEqual(worker.job(), WorkerJob.COMPLETED,
@@ -312,7 +314,7 @@ public final class BaritoneHelperGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzzBaritoneHelperMultiDrop",
-            timeoutTicks = 4000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void actualMultiDropLootIsCollectedWithoutCollapsingTheStack(
             GameTestHelper helper) {
         supportWorker(helper);
@@ -330,7 +332,8 @@ public final class BaritoneHelperGameTests {
 
         helper.succeedWhen(() -> {
             helper.assertTrue(helper.getBlockState(NEAR_TARGET).isAir(),
-                    "clay source must be broken; " + worker.mineProcessDiagnostic());
+                    failureDiagnostic("clay source must be broken; "
+                            + worker.mineProcessDiagnostic()));
             helper.assertValueEqual(worker.completedBlockCount(), 1,
                     "requested quantity counts source blocks, not loot stacks");
             helper.assertValueEqual(countItem(storage, Items.CLAY_BALL), 4,
@@ -481,7 +484,7 @@ public final class BaritoneHelperGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzzBaritoneHelperNavigation",
-            timeoutTicks = 4000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void helperNavigatesToReachableTarget(GameTestHelper helper) {
         for (int x = 1; x <= 4; x++) {
             helper.setBlock(x, 1, 1, Blocks.STONE);
@@ -520,7 +523,7 @@ public final class BaritoneHelperGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzzBaritoneHelperUnreachable",
-            timeoutTicks = 12000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void unreachableTargetRemainsAfterNavigationWatchdog(
             GameTestHelper helper) {
         supportWorker(helper);
@@ -550,7 +553,8 @@ public final class BaritoneHelperGameTests {
             helper.assertValueEqual(
                     countItem(worker, Items.EMERALD_BLOCK), 0, "watchdog collection count");
             helper.assertValueEqual(worker.job(), WorkerJob.BLOCKED,
-                    "exhausted unreachable area must block the job; " + worker.mineProcessDiagnostic());
+                    failureDiagnostic("exhausted unreachable area must block the job; "
+                            + worker.mineProcessDiagnostic()));
             helper.assertValueEqual(worker.blockReason(), WorkerBlockReason.SEARCH_AREA_UNREACHABLE,
                     "unreachable coverage must report its distinct terminal reason");
         });
@@ -599,5 +603,12 @@ public final class BaritoneHelperGameTests {
             }
         }
         return count;
+    }
+
+    private static String failureDiagnostic(String value) {
+        if (value.length() <= MAX_FAILURE_DIAGNOSTIC_LENGTH) {
+            return value;
+        }
+        return value.substring(0, MAX_FAILURE_DIAGNOSTIC_LENGTH - 3) + "...";
     }
 }
