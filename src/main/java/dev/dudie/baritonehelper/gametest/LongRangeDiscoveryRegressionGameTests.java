@@ -32,6 +32,8 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 public final class LongRangeDiscoveryRegressionGameTests {
     private static final BlockPos WORKER = new BlockPos(1, 2, 1);
     private static final int LANE_STRIDE = 512;
+    private static final int ASYNC_TIMEOUT_TICKS = 64_000;
+    private static final int MAX_FAILURE_DIAGNOSTIC_LENGTH = 800;
     // Relative to this GameTest position, the acceptance worker represents
     // the requested world position (0, 64, 0).
     private static final BlockPos ACCEPTANCE_WORKER = new BlockPos(1, 40, 1);
@@ -43,7 +45,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzLongRangeDiscoveryUnloaded",
-            timeoutTicks = 12000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void unloadedFrontierChunkIsRetriedAndCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(1);
@@ -67,7 +69,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
             templateNamespace = "minecraft",
             template = "empty",
             batch = "zzLongRangeDiscoveryOccluded",
-            timeoutTicks = 12000)
+            timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void occludedTargetUsesReachableFutureInteractionPosition(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(2);
@@ -97,31 +99,31 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange04", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryRange04", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void targetAtFourBlocksIsCollected(GameTestHelper helper) {
         runDistanceCase(helper, 3, 4, 4, Blocks.LIME_CONCRETE);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange16", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryRange16", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void targetAtSixteenBlocksIsCollected(GameTestHelper helper) {
         runDistanceCase(helper, 4, 16, 8, Blocks.EMERALD_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange32", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryRange32", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void targetAtThirtyTwoBlocksIsCollected(GameTestHelper helper) {
         runDistanceCase(helper, 5, 32, 16, Blocks.DIAMOND_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange64", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryRange64", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void targetAtSixtyFourBlocksIsCollected(GameTestHelper helper) {
         runDistanceCase(helper, 6, 64, 32, Blocks.LAPIS_BLOCK);
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRange128", timeoutTicks = 24000)
+            batch = "zzLongRangeDiscoveryRange128", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void targetAtOneHundredTwentyEightBlocksIsCollected(GameTestHelper helper) {
         runDistanceCase(helper, 7, 128, 64, Blocks.NETHERITE_BLOCK);
     }
@@ -139,7 +141,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryEmpty", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryEmpty", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void emptyWorkAreaCompletesOnlyAfterExhaustiveCoverage(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(23);
@@ -163,7 +165,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRoamLate", timeoutTicks = 24000)
+            batch = "zzLongRangeDiscoveryRoamLate", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void roamDiscoversTargetIntroducedAfterStart(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(24);
@@ -190,7 +192,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryCorner", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryCorner", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void targetAroundCornerIsCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(8);
@@ -219,7 +221,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryUnderground", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryUnderground", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void undergroundTunnelTargetIsCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(9);
@@ -249,7 +251,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryVertical", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryVertical", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void verticalTargetInsideRadiusIsCollected(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(10);
@@ -331,7 +333,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryMultiple", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryMultiple", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void multipleTargetsUseCachedCandidatesAcrossCollections(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(13);
@@ -366,7 +368,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryRestart", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryRestart", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void stoppedAndRestartedSearchStillFindsFullRadiusTarget(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(14);
@@ -390,7 +392,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzLongRangeDiscoveryOffline", timeoutTicks = 12000)
+            batch = "zzLongRangeDiscoveryOffline", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void offlineOwnerDoesNotStopDistantDiscovery(GameTestHelper helper) {
         clearExistingWorkers(helper);
         BlockPos offset = scenarioOffset(15);
@@ -760,7 +762,7 @@ public final class LongRangeDiscoveryRegressionGameTests {
             BlockPos target,
             ResourceLocation targetId) {
         BlockPos absoluteTarget = helper.absolutePos(target);
-        return "target=" + absoluteTarget
+        String value = "target=" + absoluteTarget
                 + ", state=" + helper.getLevel().getBlockState(absoluteTarget)
                 + ", center=" + worker.workAreaCenter()
                 + ", canEnter=" + worker.canEnterAt(absoluteTarget)
@@ -790,5 +792,9 @@ public final class LongRangeDiscoveryRegressionGameTests {
                                 new ChunkPos(absoluteTarget).toLong())
                 + ", chunkNow=" + (helper.getLevel().getChunkSource().getChunkNow(
                         new ChunkPos(absoluteTarget).x, new ChunkPos(absoluteTarget).z) != null);
+        if (value.length() <= MAX_FAILURE_DIAGNOSTIC_LENGTH) {
+            return value;
+        }
+        return value.substring(0, MAX_FAILURE_DIAGNOSTIC_LENGTH - 3) + "...";
     }
 }

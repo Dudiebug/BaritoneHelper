@@ -19,13 +19,14 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 @GameTestHolder(BaritoneHelper.MOD_ID)
 @PrefixGameTestTemplate(false)
 public final class FourWorkerPerformanceGameTests {
+    private static final int ASYNC_TIMEOUT_TICKS = 64_000;
     private static final long AGGREGATE_WORKER_P95_BUDGET_NANOS = 2_000_000L;
 
     private FourWorkerPerformanceGameTests() {
     }
 
     @GameTest(templateNamespace = "minecraft", template = "empty",
-            batch = "zzzzFourWorkerPerformance", timeoutTicks = 16000)
+            batch = "zzzzFourWorkerPerformance", timeoutTicks = ASYNC_TIMEOUT_TICKS)
     public static void fourActiveWorkersRemainFairAndWithinTickBudget(GameTestHelper helper) {
         for (var entity : helper.getLevel().getAllEntities()) {
             if (entity instanceof WorkerEntity worker) worker.discard();

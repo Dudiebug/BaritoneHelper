@@ -1,14 +1,16 @@
 # Baritone Helper 3.2.0-rc.1 verification evidence
 
-Status: **all local candidate gates pass**. GitHub CI, public release verification,
-and Discord delivery remain pending and are not claimed complete here.
+Status: **all local candidate gates pass**. The initial branch and pull-request
+CI passed and PR #5 merged. A follow-up test-harness stabilization is awaiting
+GitHub CI; public release verification and Discord delivery remain pending and
+are not claimed complete here.
 
 ## Source and host
 
 | Field | Value |
 |---|---|
 | Baseline | Baritone Helper 3.1.0 at `caedde01babf2799c52b7b8396c94f02cee80ce6` |
-| Verified candidate source | `78c5fd0d407b560c4f4f501e58585b208713df85` on `codex/3.2.0-rc.1` |
+| Verified candidate source | `ed6b11247a1d3aeb1b0812e032e92478a6a11628` on `codex/3.2.0-rc.1-ci-stability` |
 | `mod_version` | `3.2.0-rc.1` |
 | Upstream Baritone audit | official `1.21.1` at `f3a51d47a05fa4fc9cacd6d90091f617a8d685df` |
 | OS | Microsoft Windows 11 Pro `10.0.26200` |
@@ -19,15 +21,18 @@ and Discord delivery remain pending and are not claimed complete here.
 
 The implementation is organized into the requested five grouped commits: shared
 exploration, policy/pathing/tickets, packed lifecycle/protocol/UI,
-tests/performance, and version/docs/release automation. This evidence update is
-a docs-only descendant, so the exact tested source commit remains reachable.
+tests/performance, and version/docs/release automation. A sixth test-only commit
+raises all asynchronous GameTest deadlines to a common 64,000-tick ceiling and
+bounds failure diagnostics to 800 characters. It changes no production runtime
+behavior.
 
 Cold-discovery and soak evidence directories retain the pre-`main`-rebase name
-`b638705`; the production Java tree is unchanged by that rebase. The only test
-change makes two source-text contracts normalize CRLF to LF before matching.
+`b638705`; the production Java tree is unchanged by that rebase. The later
+CI-stability commit is limited to GameTest annotations, bounded diagnostics, and
+their executable unit contracts.
 
 Graphify was installed and used to index and query the final codebase. The final
-graph contained 3,237 nodes, 10,135 edges, and 177 communities. Its
+graph contained 3,243 nodes, 10,150 edges, and 173 communities. Its
 only parser warning was the expected Groovy `build.gradle` syntax limitation;
 Java and project-content indexing completed.
 
@@ -36,19 +41,19 @@ Java and project-content indexing completed.
 | Gate | Result | Retained evidence |
 |---|---|---|
 | Source-state contracts | PASS | clean branch head verified before external push |
-| Unit contracts | PASS, 103/103 | `release-evidence/gauntlet-bf39255/unit-test-results/` |
-| NeoForge GameTests | PASS, 57/57 in 37.45 s | `release-evidence/gauntlet-bf39255/gametest-latest.log` |
+| Unit contracts | PASS, 105/105 | `release-evidence/gauntlet-ed6b112/unit-test-results/` |
+| NeoForge GameTests | PASS, 57/57 in 38.54 s | `release-evidence/gauntlet-ed6b112/gametest-latest.log` |
 | Real multi-drop loot | PASS | clay source produced and deposited four clay balls |
-| Four-worker GameTest | PASS | final aggregate p95 1.9874 ms; individual p95 0.4751/0.4524/0.5551/0.5048 ms |
+| Four-worker GameTest | PASS | final aggregate p95 1.7879 ms; individual p95 0.4878/0.4149/0.5021/0.3831 ms |
 | Manual mutation control | PASS | generation-fence mutation caused its named contract to fail; clean source passed |
 | Two-boot cold discovery | PASS | `release-evidence/cold-b638705/` |
 | 0/1/2/4-worker 60/300 s soak with JFR | PASS | `release-evidence/soak-b638705/` |
 | Radius 6 versus 8 benchmark | PASS; radius 6 selected | `release-evidence/radius8-b638705/` and soak one-worker evidence |
-| Exact artifact inspection | PASS | `release-evidence/artifacts-bf39255/` |
-| Clean NeoForge startup/shutdown | PASS | `release-evidence/startup/fab55b04a0e04d26b8745bedb3de736a.stdout.log` |
+| Exact artifact inspection | PASS | `release-evidence/artifacts-ed6b112/` |
+| Clean NeoForge startup/shutdown | PASS | `release-evidence/startup/dcedf348357645989c2827a8e40cd229.stdout.log` |
 
 The clean-server test installed the candidate as the only mod JAR in a fresh
-NeoForge 21.1.248 dedicated server. It reached `Done (4.988s)`, accepted a clean
+NeoForge 21.1.248 dedicated server. It reached `Done (1.208s)`, accepted a clean
 stop, and saved every dimension. The official NeoForge installer used for that
 test was 6,972,104 bytes with SHA-256
 `68eeab77059ba53df1812f1afa5bf530ab2566a3cdcd5f924aa6e71be42e410c`.
@@ -119,14 +124,29 @@ The four-worker JFR contains 302 heap summaries and 151 garbage collections
 
 | Artifact | Size | SHA-256 |
 |---|---:|---|
-| `baritonehelper-3.2.0-rc.1.jar` | 738,134 B | `496737afb930542c848bdebb4f6df0689a98e33e528bd7e295f9a874c23ef998` |
-| `baritonehelper-3.2.0-rc.1-sources.jar` | 379,180 B | `449bdbb61dec7662a1a92496f4397fe8a4dbf8a94c2380a9ffa3378f8b635b33` |
+| `baritonehelper-3.2.0-rc.1.jar` | 738,518 B | `16eef1ed9fe172ca1eea61c9b1a78af5c0913833446b11079bda470dd8d162be` |
+| `baritonehelper-3.2.0-rc.1-sources.jar` | 379,482 B | `c952d178c320cc8ac98a616272166ffaa19d2a7e3d6226e87026209d3509d995` |
 
 Copies of both clean-LF artifacts are retained under
-`release-evidence/artifacts-bf39255/`. They were built from a detached clean
+`release-evidence/artifacts-ed6b112/`. They were built from a detached clean
 checkout matching GitHub's Linux checkout semantics, then installed alone in the
 clean NeoForge server. Public release assets and their downloaded digests must
 still be verified independently after the tag workflow completes.
+
+## Hosted CI stability follow-up
+
+The initial branch push and pull-request runs passed at the exact PR head. After
+PR #5 merged, the first `main` run (`33466012695`) passed unit tests but expired
+11 asynchronous GameTests after 5.169 minutes. Its 64,000- and 128,000-tick
+distance cases passed while tests with 4,000- to 24,000-tick limits expired with
+their executors still loading or idle. The same production commit passed both
+pre-merge runs (`33465834808` and `33465838687`).
+
+The follow-up makes the harness insensitive to hosted-runner tick-rate and
+executor-start variance, and prevents Minecraft's 1,024-character writable-book
+limit from obscuring a failure with secondary save exceptions. Two unit
+contracts enforce both invariants. Local verification at the follow-up source is
+105/105 units and 57/57 GameTests; no production class changed.
 
 ## Reproduction commands
 
