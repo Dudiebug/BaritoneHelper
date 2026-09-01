@@ -4,16 +4,25 @@ All notable user-facing changes to Baritone Helper are recorded here.
 
 ## Unreleased
 
+## 3.2.0-rc.1 - 2026-08-31
+
 ### Added
 
-- Product-focused README, documentation index, user guide, architecture guide, testing guide, and release-process documentation.
-- Structured GitHub bug-report, feature-request, and pull-request templates.
+- Bounded exhaustive work-area discovery and explicit opt-in Roam mode.
+- Target-aware shared persistent world knowledge with dirty coverage and corrected 512-block cached-region semantics.
+- Protocol-4 UUID/dimension remote management, idempotent desired-state actions, and real search/path telemetry.
+- Transactional packed-worker pickup and owner-only stopped-state restoration.
+- Reproducible two-boot cold-discovery, 0/1/2/4-worker JFR, mutation, clean-startup, and exact-artifact verification harnesses.
+- Product-focused documentation, user/architecture/testing/release guides, and structured GitHub contribution templates.
 
 ### Changed
 
-- Version-specific specifications and verification records are organized under `docs/releases/` and `docs/archive/` instead of being presented as current root-level contracts.
-- The release workflow no longer hardcodes a default release version, requires a matching changelog entry, uses that entry as release notes, and publishes SHA-256 checksums with release artifacts.
+- Active view and simulation tickets now slide with the worker and are released whenever work is not active; radius 6 was selected by benchmark.
+- Hard break prohibitions are distinct from soft avoid-breaking costs, with modern 1.21.1 blocks, fluids, climbing, and support surfaces audited against current upstream Baritone.
+- Mining retains progressive break timing, constant `1.0F` movement input, normal multi-drop behavior, tool durability, and server-side interaction revalidation.
+- Version-specific specifications and verification records are organized under release/archive documentation instead of being presented as permanent current contracts.
 - NeoForge MDK template licensing is retained under `LICENSES/NeoForge-MDK-MIT.txt` with a clearer name.
+- Release automation accepts an exact manual tag, reruns release gates, publishes SHA-256 digests, and creates a prerelease without marking it latest.
 
 ## 3.1.0 - 2026-08-31
 

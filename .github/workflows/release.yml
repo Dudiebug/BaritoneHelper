@@ -1,34 +1,42 @@
 name: Release Baritone Helper
 
 on:
-  push:
-    tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag (must match gradle.properties, for example v3.2.0)
+        description: Release tag (must match gradle.properties)
         required: true
         type: string
+        default: v3.2.0-rc.1
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
+
+      - name: Validate exact release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+          TAG="$RELEASE_TAG"
+          test "$TAG" = "v$VERSION"
+          test "$VERSION" = "3.2.0-rc.1"
+          test "$(git describe --tags --exact-match HEAD)" = "$TAG"
+          grep -Eq "^## ${VERSION}( - .*)?$" CHANGELOG.md
 
       - name: Setup JDK 21
         uses: actions/setup-java@v4
@@ -38,14 +46,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Validate release metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
-          test "$RELEASE_TAG" = "v$VERSION"
-          grep -Eq "^## ${VERSION}( - .*)?$" CHANGELOG.md
 
       - name: Verify unit contracts
         run: ./gradlew clean test --no-daemon --console=plain
@@ -59,55 +59,49 @@ jobs:
           set -euo pipefail
           ./gradlew build --no-daemon --console=plain
           VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+          TAG="$RELEASE_TAG"
+          test "$TAG" = "v$VERSION"
+          test "$(git describe --tags --exact-match HEAD)" = "$TAG"
           test -f "build/libs/baritonehelper-$VERSION.jar"
           test -f "build/libs/baritonehelper-$VERSION-sources.jar"
           test "$(find build/libs -maxdepth 1 -type f -name "baritonehelper-$VERSION.jar" | wc -l)" = 1
           test "$(find build/libs -maxdepth 1 -type f -name "baritonehelper-$VERSION-sources.jar" | wc -l)" = 1
+          test -f RELEASE_NOTES-3.2.0-rc.1.md
+          sha256sum "build/libs/baritonehelper-$VERSION.jar" \
+            "build/libs/baritonehelper-$VERSION-sources.jar" \
+            | tee build/libs/SHA256SUMS
 
-      - name: Prepare release notes
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
-          python3 - "$VERSION" <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          version = sys.argv[1]
-          text = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
-          match = re.search(rf'^## {re.escape(version)}(?: - .*)?$', text, flags=re.MULTILINE)
-          if not match:
-              raise SystemExit(f'CHANGELOG.md has no section for {version}')
-
-          tail = text[match.end():]
-          next_heading = re.search(r'^## ', tail, flags=re.MULTILINE)
-          end = match.end() + (next_heading.start() if next_heading else len(tail))
-          section = text[match.start():end].strip()
-          pathlib.Path('RELEASE_NOTES.md').write_text(section + '\n', encoding='utf-8')
-          PY
-
-      - name: Generate SHA-256 checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
-          (
-            cd build/libs
-            sha256sum "baritonehelper-$VERSION.jar" "baritonehelper-$VERSION-sources.jar"
-          ) > checksums.txt
-
-      - name: Create GitHub release
+      - name: Create GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          TAG="$RELEASE_TAG"
           VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
-          gh release create "$RELEASE_TAG" \
+          gh release create "$TAG" \
             "build/libs/baritonehelper-$VERSION.jar" \
             "build/libs/baritonehelper-$VERSION-sources.jar" \
-            "checksums.txt" \
-            --title "Baritone Helper $RELEASE_TAG" \
-            --notes-file RELEASE_NOTES.md \
-            --latest
+            build/libs/SHA256SUMS \
+            --title "Baritone Helper $TAG" \
+            --verify-tag \
+            --prerelease \
+            --notes-file RELEASE_NOTES-3.2.0-rc.1.md
+
+      - name: Verify published prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$RELEASE_TAG"
+          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+          RELEASE="$(gh release view "$TAG" --json tagName,isDraft,isPrerelease,assets,url)"
+          test "$(jq -r '.tagName' <<<"$RELEASE")" = "$TAG"
+          test "$(jq -r '.isDraft' <<<"$RELEASE")" = "false"
+          test "$(jq -r '.isPrerelease' <<<"$RELEASE")" = "true"
+          jq -e --arg asset "baritonehelper-$VERSION.jar" \
+            '.assets | any(.name == $asset)' <<<"$RELEASE"
+          jq -e --arg asset "baritonehelper-$VERSION-sources.jar" \
+            '.assets | any(.name == $asset)' <<<"$RELEASE"
+          jq -e '.assets | any(.name == "SHA256SUMS")' <<<"$RELEASE"
