@@ -45,7 +45,12 @@ class PathingConcurrencyContractTest {
         assertTrue(source.contains("this.calculationGeneration != generation"));
         assertTrue(source.contains("server.execute"));
         assertTrue(source.contains("goalsEquivalent(this.goal, goal)"));
-        assertTrue(source.contains("first.toString().equals(second.toString())"),
-                "equivalent rebuilt MineProcess goals must not stale an async path result");
+        assertFalse(source.contains("first.toString().equals(second.toString())"),
+                "coordinate censorship makes toString unsuitable for goal identity");
+        assertTrue(source.contains("new AStarPathFinder(realStart"));
+        assertTrue(source.contains("positions().contains(new BetterBlockPos(start))"));
+        assertTrue(source.contains("PATH_EVENT_QUEUE_CAPACITY = 64"));
+        assertTrue(source.contains("new ArrayBlockingQueue<>(PATH_EVENT_QUEUE_CAPACITY, true)"));
+        assertFalse(source.contains("LinkedBlockingQueue<PathEvent>"));
     }
 }

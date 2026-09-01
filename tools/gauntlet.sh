@@ -4,6 +4,8 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_dir"
 
+tools/source-state.sh --require-clean
+
 java_bin="${BARITONEHELPER_JAVA:-$(command -v java || true)}"
 if [[ -z "$java_bin" ]]; then
   echo "Java 21 was not found. Set BARITONEHELPER_JAVA." >&2
@@ -32,6 +34,8 @@ test "${runtime_jars[0]}" = "$runtime_jar"
 test "${source_jars[0]}" = "$source_jar"
 test -s "$runtime_jar"
 test -s "$source_jar"
+tools/inspect-artifact.sh --artifact "$runtime_jar"
+tools/startup-check.sh --artifact "$runtime_jar" --timeout "${BARITONEHELPER_CANDIDATE_STARTUP_TIMEOUT:-60}"
 test ! -e src/main/java/dev/dudie/buddybot
 test ! -e src/main/resources/data/buddybot
 test -f src/main/resources/assets/buddybot/models/item/buddy_bot.json

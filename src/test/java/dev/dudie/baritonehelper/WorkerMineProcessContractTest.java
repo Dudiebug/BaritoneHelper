@@ -16,6 +16,7 @@ class WorkerMineProcessContractTest {
     @Test
     void collectionStartsConfiguredBlockThroughMineProcess() throws IOException {
         String controller = read("src/main/java/dev/dudie/baritonehelper/worker/WorkerController.java");
+        String worker = read("src/main/java/dev/dudie/baritonehelper/entity/WorkerEntity.java");
         int collectionStart = controller.indexOf("private void tickCollection");
         int depositStart = controller.indexOf("private void tickDeposit");
         String collection = controller.substring(collectionStart, depositStart);
@@ -28,6 +29,10 @@ class WorkerMineProcessContractTest {
         assertFalse(collection.contains("hasLineOfSight"));
         assertFalse(collection.contains("beginPathTo"));
         assertTrue(controller.contains("pathRequested = worker.beginPathTo(destination)"));
+        assertTrue(worker.contains("targetBlockId == null || !workerChunkWindowReady()"),
+                "MineProcess must not snapshot a partially loaded ticket window");
+        assertTrue(worker.contains("SEARCH_TICKETS.forceChunk("));
+        assertTrue(worker.contains("loaded.addAll(searchTicketChunks)"));
     }
 
     @Test

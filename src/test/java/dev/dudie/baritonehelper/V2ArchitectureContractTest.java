@@ -87,7 +87,7 @@ class V2ArchitectureContractTest {
     @Test
     void releaseMetadataHasSemanticVersionAndIncludesSourceLicense() throws IOException {
         String properties = read("gradle.properties");
-        assertTrue(properties.matches("(?s).*(?m:^mod_version=\\d+\\.\\d+\\.\\d+$).*"));
+        assertTrue(properties.matches("(?s).*(?m:^mod_version=\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$).*"));
         assertTrue(properties.contains("LGPL-3.0-or-later"));
         assertTrue(Files.exists(Path.of("LICENSES/LGPL-3.0.txt")));
         assertTrue(Files.exists(Path.of("THIRD_PARTY_NOTICES.md")));

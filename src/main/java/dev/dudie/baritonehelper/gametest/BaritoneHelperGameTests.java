@@ -1,11 +1,17 @@
 package dev.dudie.baritonehelper.gametest;
 
 import dev.dudie.baritonehelper.BaritoneHelper;
+import dev.dudie.baritonehelper.BaritoneHelperDataComponents;
 import dev.dudie.baritonehelper.entity.WorkerEntity;
+import dev.dudie.baritonehelper.internal.baritone.cache.SharedWorldKnowledge;
+import dev.dudie.baritonehelper.worker.PackedWorkerData;
+import dev.dudie.baritonehelper.worker.WorkerActionResult;
+import dev.dudie.baritonehelper.worker.WorkerBlockReason;
 import dev.dudie.baritonehelper.worker.WorkerJob;
 import java.util.List;
 import java.util.Objects;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -14,6 +20,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -24,6 +31,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.portal.DimensionTransition;
@@ -40,7 +48,8 @@ public final class BaritoneHelperGameTests {
     private BaritoneHelperGameTests() {
     }
 
-    @GameTest(templateNamespace = "minecraft", template = "empty")
+    @GameTest(templateNamespace = "minecraft", template = "empty",
+            batch = "zzzBaritoneHelperPersistence")
     public static void ownerInventoryJobCargoStorageAndExclusionsPersistWithoutTierData(
             GameTestHelper helper) {
         supportWorker(helper);
@@ -58,6 +67,7 @@ public final class BaritoneHelperGameTests {
         BlockPos storage = helper.absolutePos(new BlockPos(2, 1, 2));
         ResourceLocation ironBlock = blockId(Blocks.IRON_BLOCK);
         ResourceLocation dirt = blockId(Blocks.DIRT);
+        original.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         original.beginCollection(ironBlock, origin);
         original.assignStorage(helper.getLevel(), storage);
         original.toggleExclusion(dirt);
@@ -173,18 +183,20 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzPickupLifecycle",
             timeoutTicks = 40)
-    public static void ownerDismissalDropsContentsOnceReturnsHelperAndReleasesTickets(
+    public static void ownerDismissalPacksContentsOnceReturnsHelperAndReleasesTickets(
             GameTestHelper helper) {
         supportWorker(helper);
         WorkerEntity worker = spawnWorker(helper);
-        var owner = helper.makeMockPlayer(GameType.SURVIVAL);
+        var owner = helper.makeMockServerPlayerInLevel();
         worker.bindTo(owner);
+        owner.getData(BaritoneHelper.ACTIVE_WORKER).set(
+                worker.getUUID(), helper.getLevel().dimension().location().toString(), worker.blockPosition());
         worker.setItem(0, new ItemStack(Items.DIAMOND, 3));
         worker.ensureWorkerTickets();
-        var dropArea = worker.getBoundingBox().inflate(2.0);
-
-        helper.assertTrue(worker.workerTicketCount() > 0, "helper must hold chunk tickets");
+        helper.assertValueEqual(worker.workerTicketCount(), 0,
+                "idle helper must not hold chunk tickets");
         owner.setShiftKeyDown(true);
         worker.mobInteract(owner, InteractionHand.MAIN_HAND);
 
@@ -194,12 +206,19 @@ public final class BaritoneHelperGameTests {
                     owner.getInventory().countItem(BaritoneHelper.BARITONE_HELPER.get()),
                     1,
                     "returned base Baritone Helper item");
-            List<ItemEntity> drops = helper.getLevel().getEntitiesOfClass(
-                    ItemEntity.class,
-                    dropArea,
-                    item -> item.getItem().is(Items.DIAMOND));
-            int diamonds = drops.stream().mapToInt(item -> item.getItem().getCount()).sum();
-            helper.assertValueEqual(diamonds, 3, "dismissed inventory diamonds");
+            ItemStack packedStack = ItemStack.EMPTY;
+            for (int slot = 0; slot < owner.getInventory().getContainerSize(); slot++) {
+                ItemStack candidate = owner.getInventory().getItem(slot);
+                if (candidate.get(BaritoneHelperDataComponents.PACKED_WORKER.get()) != null) {
+                    packedStack = candidate;
+                    break;
+                }
+            }
+            PackedWorkerData packed = packedStack.get(BaritoneHelperDataComponents.PACKED_WORKER.get());
+            helper.assertTrue(packed != null && packed.isPlaceable(), "returned item is committed packed worker");
+            NonNullList<ItemStack> restored = NonNullList.withSize(WorkerEntity.EXPANDED_SLOTS, ItemStack.EMPTY);
+            ContainerHelper.loadAllItems(packed.persistentData(), restored, helper.getLevel().registryAccess());
+            helper.assertValueEqual(restored.get(0).getCount(), 3, "packed inventory diamonds");
             helper.assertValueEqual(worker.workerTicketCount(), 0, "released worker tickets");
             helper.succeed();
         });
@@ -208,26 +227,45 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperOffline",
             timeoutTicks = 4000)
     public static void helperCollectsConfiguredBlockWhileOwnerIsOffline(
             GameTestHelper helper) {
         supportWorker(helper);
         helper.setBlock(NEAR_TARGET, Blocks.IRON_BLOCK);
+        BlockPos storagePos = new BlockPos(2, 1, 2);
+        helper.setBlock(storagePos, Blocks.CHEST);
+        Container storage = containerAt(helper, storagePos);
         WorkerEntity worker = spawnWorker(helper);
         var offlineOwner = helper.makeMockPlayer(GameType.SURVIVAL);
         worker.bindTo(offlineOwner);
-        worker.beginCollection(
+        worker.configureTarget(
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(NEAR_TARGET));
+        // Keep this acceptance fixture isolated from neighboring GameTest structures.
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 2, 8);
+        worker.setRequestedAmount(1, false);
+        worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
+        helper.assertValueEqual(worker.startJob(), WorkerActionResult.STARTED,
+                "offline collection starts");
+        helper.assertTrue(worker.workerTicketCount() > 0,
+                "offline active worker must retain chunk tickets");
 
         helper.succeedWhen(() -> {
             helper.assertTrue(
                     helper.getBlockState(NEAR_TARGET).isAir(),
-                    "configured block must be collected");
+                    "configured block must be collected; job=" + worker.job()
+                            + ", reason=" + worker.blockReason()
+                            + ", runtime=" + worker.runtimeState()
+                            + ", search=" + worker.mineSearchOutcome()
+                            + ", path=" + worker.pathingStatus()
+                            + ", telemetry=" + worker.searchTelemetry()
+                            + ", mine=" + worker.mineProcessDiagnostic());
             helper.assertValueEqual(
-                    countItem(worker, Items.IRON_BLOCK), 1, "collected iron block");
-            helper.assertTrue(
-                    worker.workerTicketCount() > 0,
-                    "offline worker must retain chunk tickets");
+                    countItem(storage, Items.IRON_BLOCK), 1, "deposited iron block");
+            helper.assertValueEqual(worker.job(), WorkerJob.COMPLETED,
+                    "finite offline collection completes");
+            helper.assertValueEqual(worker.workerTicketCount(), 0,
+                    "completed offline worker releases chunk tickets");
             helper.succeed();
         });
     }
@@ -235,6 +273,7 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperFiniteGoal",
             timeoutTicks = 4000)
     public static void finiteGoalCompletesAfterRealDropAndDeposit(GameTestHelper helper) {
         supportWorker(helper);
@@ -244,13 +283,21 @@ public final class BaritoneHelperGameTests {
         Container storage = containerAt(helper, storagePos);
         WorkerEntity worker = spawnWorker(helper);
         worker.configureTarget(blockId(Blocks.GOLD_BLOCK), helper.absolutePos(NEAR_TARGET));
+        // Keep this fixture isolated from neighboring GameTest structures.
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 2, 8);
         worker.setRequestedAmount(1, false);
         worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
         worker.startJob();
 
         helper.succeedWhen(() -> {
             helper.assertTrue(helper.getBlockState(NEAR_TARGET).isAir(),
-                    "finite goal must break the source block");
+                    "finite goal must break the source block; job=" + worker.job()
+                            + ", reason=" + worker.blockReason()
+                            + ", runtime=" + worker.runtimeState()
+                            + ", search=" + worker.mineSearchOutcome()
+                            + ", path=" + worker.pathingStatus()
+                            + ", telemetry=" + worker.searchTelemetry()
+                            + ", mine=" + worker.mineProcessDiagnostic());
             helper.assertValueEqual(worker.completedBlockCount(), 1,
                     "finite goal source-block count");
             helper.assertValueEqual(worker.job(), WorkerJob.COMPLETED,
@@ -264,6 +311,40 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperMultiDrop",
+            timeoutTicks = 4000)
+    public static void actualMultiDropLootIsCollectedWithoutCollapsingTheStack(
+            GameTestHelper helper) {
+        supportWorker(helper);
+        helper.setBlock(NEAR_TARGET, Blocks.CLAY);
+        BlockPos storagePos = new BlockPos(2, 1, 2);
+        helper.setBlock(storagePos, Blocks.CHEST);
+        Container storage = containerAt(helper, storagePos);
+        WorkerEntity worker = spawnWorker(helper);
+        worker.configureTarget(blockId(Blocks.CLAY), helper.absolutePos(NEAR_TARGET));
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 2, 8);
+        worker.setRequestedAmount(1, false);
+        worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
+        helper.assertValueEqual(worker.startJob(), WorkerActionResult.STARTED,
+                "multi-drop collection starts");
+
+        helper.succeedWhen(() -> {
+            helper.assertTrue(helper.getBlockState(NEAR_TARGET).isAir(),
+                    "clay source must be broken; " + worker.mineProcessDiagnostic());
+            helper.assertValueEqual(worker.completedBlockCount(), 1,
+                    "requested quantity counts source blocks, not loot stacks");
+            helper.assertValueEqual(countItem(storage, Items.CLAY_BALL), 4,
+                    "vanilla clay loot table must deliver all four drops");
+            helper.assertValueEqual(worker.job(), WorkerJob.COMPLETED,
+                    "multi-drop finite job completes after deposit");
+            helper.succeed();
+        });
+    }
+
+    @GameTest(
+            templateNamespace = "minecraft",
+            template = "empty",
+            batch = "zzzBaritoneHelperDeposit",
             timeoutTicks = 40)
     public static void helperDepositsInventoryIntoAssignedStorage(GameTestHelper helper) {
         supportWorker(helper);
@@ -271,6 +352,7 @@ public final class BaritoneHelperGameTests {
         helper.setBlock(storagePos, Blocks.CHEST);
         Container storage = containerAt(helper, storagePos);
         WorkerEntity worker = spawnWorker(helper);
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         worker.beginCollection(
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(NEAR_TARGET));
         worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
@@ -290,6 +372,7 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperFullStorage",
             timeoutTicks = 40)
     public static void fullStorageBlocksJobWithoutDeletingCargo(GameTestHelper helper) {
         supportWorker(helper);
@@ -301,6 +384,7 @@ public final class BaritoneHelperGameTests {
         }
 
         WorkerEntity worker = spawnWorker(helper);
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         worker.beginCollection(
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(NEAR_TARGET));
         worker.assignStorage(helper.getLevel(), helper.absolutePos(storagePos));
@@ -320,6 +404,7 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperFullInventory",
             timeoutTicks = 40)
     public static void fullWorkerInventoryPreservesTargetBlock(GameTestHelper helper) {
         supportWorker(helper);
@@ -328,6 +413,7 @@ public final class BaritoneHelperGameTests {
         for (int slot = 0; slot < worker.getContainerSize(); slot++) {
             worker.setItem(slot, new ItemStack(Items.DIRT, 64));
         }
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         worker.beginCollection(
                 blockId(Blocks.IRON_BLOCK), helper.absolutePos(NEAR_TARGET));
 
@@ -347,12 +433,14 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperExcluded",
             timeoutTicks = 40)
     public static void excludedBlockTypeIsNotCollected(GameTestHelper helper) {
         supportWorker(helper);
         helper.setBlock(NEAR_TARGET, Blocks.IRON_BLOCK);
         WorkerEntity worker = spawnWorker(helper);
         ResourceLocation target = blockId(Blocks.IRON_BLOCK);
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         worker.beginCollection(target, helper.absolutePos(NEAR_TARGET));
         worker.toggleExclusion(target);
 
@@ -392,17 +480,19 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
+            batch = "zzzBaritoneHelperNavigation",
             timeoutTicks = 4000)
     public static void helperNavigatesToReachableTarget(GameTestHelper helper) {
         for (int x = 1; x <= 4; x++) {
             helper.setBlock(x, 1, 1, Blocks.STONE);
         }
         BlockPos target = new BlockPos(4, 2, 1);
-        helper.setBlock(target, Blocks.GOLD_BLOCK);
+        helper.setBlock(target, Blocks.RAW_GOLD_BLOCK);
         WorkerEntity worker = spawnWorker(helper);
         Vec3 start = worker.position();
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         worker.beginCollection(
-                blockId(Blocks.GOLD_BLOCK), helper.absolutePos(target));
+                blockId(Blocks.RAW_GOLD_BLOCK), helper.absolutePos(target));
 
         helper.succeedWhen(() -> {
             String diagnostic = "reachable target must be collected; "
@@ -421,7 +511,7 @@ public final class BaritoneHelperGameTests {
                     worker.position().distanceToSqr(start) > 0.25,
                     "helper must navigate toward a distant target");
             helper.assertValueEqual(
-                    countItem(worker, Items.GOLD_BLOCK), 1, "traversal collection");
+                    countItem(worker, Blocks.RAW_GOLD_BLOCK.asItem()), 1, "traversal collection");
             helper.succeed();
         });
     }
@@ -429,7 +519,8 @@ public final class BaritoneHelperGameTests {
     @GameTest(
             templateNamespace = "minecraft",
             template = "empty",
-            timeoutTicks = 280)
+            batch = "zzzBaritoneHelperUnreachable",
+            timeoutTicks = 12000)
     public static void unreachableTargetRemainsAfterNavigationWatchdog(
             GameTestHelper helper) {
         supportWorker(helper);
@@ -448,22 +539,35 @@ public final class BaritoneHelperGameTests {
         }
         helper.setBlock(target, Blocks.EMERALD_BLOCK);
         WorkerEntity worker = spawnWorker(helper);
+        worker.setWorkArea(helper.absolutePos(WORKER_POS), 8, 8);
         worker.beginCollection(
                 blockId(Blocks.EMERALD_BLOCK), helper.absolutePos(target));
 
-        helper.runAfterDelay(230, () -> {
+        helper.succeedWhen(() -> {
             helper.assertTrue(
                     helper.getBlockState(target).is(Blocks.EMERALD_BLOCK),
                     "unreachable target must not be mined through walls");
             helper.assertValueEqual(
                     countItem(worker, Items.EMERALD_BLOCK), 0, "watchdog collection count");
-            helper.assertValueEqual(
-                    worker.job(), WorkerJob.COLLECT, "watchdog keeps job resumable");
-            helper.succeed();
+            helper.assertValueEqual(worker.job(), WorkerJob.BLOCKED,
+                    "exhausted unreachable area must block the job; " + worker.mineProcessDiagnostic());
+            helper.assertValueEqual(worker.blockReason(), WorkerBlockReason.SEARCH_AREA_UNREACHABLE,
+                    "unreachable coverage must report its distinct terminal reason");
         });
     }
 
     private static WorkerEntity spawnWorker(GameTestHelper helper) {
+        BlockPos absolute = helper.absolutePos(WORKER_POS);
+        int minChunkX = Math.floorDiv(absolute.getX() - 8, 16);
+        int maxChunkX = Math.floorDiv(absolute.getX() + 8, 16);
+        int minChunkZ = Math.floorDiv(absolute.getZ() - 8, 16);
+        int maxChunkZ = Math.floorDiv(absolute.getZ() + 8, 16);
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                SharedWorldKnowledge.get(helper.getLevel()).cachedWorld()
+                        .markDirty(ChunkPos.asLong(chunkX, chunkZ));
+            }
+        }
         return helper.spawn(
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(),
                 WORKER_POS.getX(),
