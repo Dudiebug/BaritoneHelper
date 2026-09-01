@@ -17,6 +17,8 @@
 
 package dev.dudie.baritonehelper.internal.baritone.api.pathing.goals;
 
+import java.util.Objects;
+
 public class GoalInverted implements Goal {
    public final Goal origin;
 
@@ -42,5 +44,16 @@ public class GoalInverted implements Goal {
    @Override
    public String toString() {
       return String.format("GoalInverted{%s}", this.origin.toString());
+   }
+
+   @Override
+   public boolean equals(Object other) {
+      return this == other || other != null && this.getClass() == other.getClass()
+            && Objects.equals(this.origin, ((GoalInverted)other).origin);
+   }
+
+   @Override
+   public int hashCode() {
+      return Objects.hashCode(this.origin);
    }
 }

@@ -40,15 +40,16 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.MinecraftServer;
 
 public final class PathingBehavior extends Behavior implements IPathingBehavior {
+   private static final int PATH_EVENT_QUEUE_CAPACITY = 64;
    private PathExecutor current;
    private PathExecutor next;
    private volatile Goal goal;
@@ -66,7 +67,8 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    private final Object pathCalcLock = new Object();
    private final Object pathPlanLock = new Object();
    private BetterBlockPos expectedSegmentStart;
-   private final LinkedBlockingQueue<PathEvent> toDispatch = new LinkedBlockingQueue<>();
+   private final ArrayBlockingQueue<PathEvent> toDispatch =
+         new ArrayBlockingQueue<>(PATH_EVENT_QUEUE_CAPACITY, true);
    private volatile PathingStatus status = PathingStatus.IDLE;
    private long calculationGeneration;
 
@@ -75,7 +77,10 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    }
 
    private void queuePathEvent(PathEvent event) {
-      this.toDispatch.add(event);
+      if (!this.toDispatch.offer(event)) {
+         this.toDispatch.poll();
+         this.toDispatch.offer(event);
+      }
    }
 
    private void dispatchEvents() {
@@ -125,6 +130,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
 
    private void tickPath() {
       this.pausedThisTick = false;
+      this.applyPendingSoftCancellation();
       if (this.pauseRequestedLastTick && this.safeToCancel) {
          this.pauseRequestedLastTick = false;
          if (this.unpausedLastTick) {
@@ -136,11 +142,6 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
          this.pausedThisTick = true;
       } else {
          this.unpausedLastTick = true;
-         if (this.cancelRequested) {
-            this.cancelRequested = false;
-            this.baritone.getInputOverrideHandler().clearAllKeys();
-         }
-
          synchronized (this.pathPlanLock) {
             synchronized (this.pathCalcLock) {
                if (this.inProgress != null) {
@@ -247,17 +248,14 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    }
 
    private static boolean goalsEquivalent(Goal first, Goal second) {
-      return Objects.equals(first, second)
-         || first != null && second != null
-            && first.getClass() == second.getClass()
-            && first.toString().equals(second.toString());
+      return Objects.equals(first, second);
    }
 
    public boolean secretInternalSetGoalAndPath(PathingCommand command) {
       this.secretInternalSetGoal(command.goal);
       if (this.goal == null) {
          return false;
-      } else if (!this.goal.isInGoal(this.ctx.feetPos()) && !this.goal.isInGoal(this.expectedSegmentStart)) {
+      } else if (!this.goal.isInGoal(this.ctx.feetPos())) {
          synchronized (this.pathPlanLock) {
             if (this.current != null) {
                return false;
@@ -351,22 +349,23 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    public void softCancelIfSafe() {
       synchronized (this.pathPlanLock) {
          this.invalidateCalculation();
-         if (!this.isSafeToCancel()) {
-            return;
-         }
+         this.cancelRequested = true;
+      }
+      this.applyPendingSoftCancellation();
+   }
 
+   private void applyPendingSoftCancellation() {
+      synchronized (this.pathPlanLock) {
+         if (!this.cancelRequested || !this.isSafeToCancel()) return;
          this.current = null;
          this.next = null;
+         this.cancelRequested = false;
       }
-
-      this.cancelRequested = true;
-      this.status = PathingStatus.CANCELLED;
+      this.baritone.getInputOverrideHandler().clearAllKeys();
+      this.baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
    }
 
    private void secretInternalSegmentCancel() {
-      if (this.status != PathingStatus.NO_PATH && this.status != PathingStatus.FAILED) {
-         this.status = PathingStatus.CANCELLED;
-      }
       this.queuePathEvent(PathEvent.CANCELED);
       synchronized (this.pathPlanLock) {
          this.invalidateCalculation();
@@ -388,10 +387,13 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
    private void invalidateCalculation() {
       synchronized (this.pathCalcLock) {
          this.calculationGeneration++;
-         AbstractNodeCostSearch pathfinder = this.inProgress;
-         Future<?> future = this.calculationFuture;
-         this.inProgress = null;
-         this.calculationFuture = null;
+          AbstractNodeCostSearch pathfinder = this.inProgress;
+          Future<?> future = this.calculationFuture;
+          this.inProgress = null;
+          this.calculationFuture = null;
+          if (pathfinder != null || future != null) {
+             InternalBaritoneRuntime.recordPathCancellation();
+          }
          if (pathfinder != null) {
             pathfinder.cancel();
          }
@@ -578,11 +580,11 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
             synchronized (this.pathCalcLock) {
                if (this.inProgress != pathfinder
                   || this.calculationGeneration != generation
-                  || !Objects.equals(this.goal, goal)) {
+                  || !goalsEquivalent(this.goal, goal)) {
                   return;
                }
             }
-            if (!Objects.equals(this.goal, goal)) {
+            if (!goalsEquivalent(this.goal, goal)) {
                return;
             }
             if (calcResult.getType() == PathCalculationResult.Type.EXCEPTION) {
@@ -591,7 +593,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
             Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(this, p));
             if (this.current == null) {
                if (executor.isPresent()) {
-                  if (executor.get().getPath().getSrc().equals(new BetterBlockPos(start))) {
+                  if (executor.get().getPath().positions().contains(new BetterBlockPos(start))) {
                      this.queuePathEvent(PathEvent.CALC_FINISHED_NOW_EXECUTING);
                      this.current = executor.get();
                      this.resetEstimatedTicksToGoal(start);
@@ -666,7 +668,15 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior 
       }
 
       Favoring favoring = new Favoring(context.getBaritone().getEntityContext(), previous, context);
-      return new AStarPathFinder(start.getX(), start.getY(), start.getZ(), transformed, favoring, context);
+      BetterBlockPos feet = context.getBaritone().getEntityContext().feetPos();
+      BetterBlockPos realStart = new BetterBlockPos(start);
+      BlockPos delta = feet.subtract(realStart);
+      if (feet.getY() == realStart.getY()
+            && Math.abs(delta.getX()) <= 1
+            && Math.abs(delta.getZ()) <= 1) {
+         realStart = feet;
+      }
+      return new AStarPathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context);
    }
 
    private void logDebug(String message) {

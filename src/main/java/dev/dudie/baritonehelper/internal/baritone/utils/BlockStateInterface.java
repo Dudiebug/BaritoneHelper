@@ -19,6 +19,7 @@ package dev.dudie.baritonehelper.internal.baritone.utils;
 
 import dev.dudie.baritonehelper.entity.WorkerEntity;
 import dev.dudie.baritonehelper.internal.baritone.api.utils.IEntityContext;
+import dev.dudie.baritonehelper.internal.baritone.utils.pathing.BetterWorldBorder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,7 @@ public class BlockStateInterface {
    protected final BlockGetter world;
    public final MutableBlockPos isPassableBlockPos;
    public final BlockGetter access;
+   public final BetterWorldBorder worldBorder;
    private LevelChunk prev = null;
    private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
@@ -62,6 +64,7 @@ public class BlockStateInterface {
       this.snapshots = snapshotChunks == null ? null : snapshotChunks(snapshotChunks);
       this.isPassableBlockPos = new MutableBlockPos();
       this.access = new BlockStateInterfaceAccessWrapper(this);
+      this.worldBorder = new BetterWorldBorder(world.getWorldBorder());
    }
 
    /** Copies ticketed chunk palettes on the server thread for async A*. */

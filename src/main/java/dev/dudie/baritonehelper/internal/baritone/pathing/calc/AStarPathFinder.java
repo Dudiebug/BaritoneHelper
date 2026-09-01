@@ -34,8 +34,15 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
    private final Favoring favoring;
    private final CalculationContext calcContext;
 
-   public AStarPathFinder(int startX, int startY, int startZ, Goal goal, Favoring favoring, CalculationContext context) {
-      super(startX, startY, startZ, goal, context);
+   public AStarPathFinder(
+         BetterBlockPos realStart,
+         int startX,
+         int startY,
+         int startZ,
+         Goal goal,
+         Favoring favoring,
+         CalculationContext context) {
+      super(realStart, startX, startY, startZ, goal, context);
       this.favoring = favoring;
       this.calcContext = context;
    }
@@ -103,10 +110,14 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
          if (this.goal.isInGoal(currentNode.x, currentNode.y, currentNode.z)) {
             this.publishProgress();
             this.calcContext.baritone.logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
-            return Optional.of(new Path(this.startNode, currentNode, numNodes, this.goal, this.calcContext));
+            return Optional.of(new Path(this.realStart, this.startNode, currentNode, numNodes, this.goal, this.calcContext));
          }
 
          for (Moves moves : allMoves) {
+            if (this.cancelRequested.get()) {
+               break;
+            }
+
             int newX = currentNode.x + moves.xOffset;
             int newZ = currentNode.z + moves.zOffset;
             if ((newX >> 4 != currentNode.x >> 4 || newZ >> 4 != currentNode.z >> 4) && !this.calcContext.isLoaded(newX, newZ)) {
@@ -118,6 +129,10 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                && currentNode.y + moves.yOffset >= this.calcContext.worldBottom) {
                res.reset();
                moves.apply(this.calcContext, currentNode.x, currentNode.y, currentNode.z, res);
+               if (this.cancelRequested.get()) {
+                  break;
+               }
+
                numMovementsConsidered++;
                if (this.calcContext.isNoEnter(res.x, res.y, res.z)) {
                   continue;
@@ -172,7 +187,13 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                }
             }
          }
-         this.publishProgress();
+         // Deep-copying every predecessor chain on every expanded node turns
+         // an otherwise bounded A* into quadratic telemetry work. A 64-node
+         // cadence keeps cancellation/progress readers current while leaving
+         // the planner's wall-clock budget for actual path expansion.
+         if ((numNodes & 63) == 0) {
+            this.publishProgress();
+         }
       }
 
       this.publishProgress();

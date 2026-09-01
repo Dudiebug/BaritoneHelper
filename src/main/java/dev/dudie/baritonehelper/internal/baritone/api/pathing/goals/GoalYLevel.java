@@ -49,4 +49,15 @@ public class GoalYLevel implements Goal, ActionCosts {
    public String toString() {
       return String.format("GoalYLevel{y=%s}", SettingsUtil.maybeCensor(this.level));
    }
+
+   @Override
+   public boolean equals(Object other) {
+      return this == other || other != null && this.getClass() == other.getClass()
+            && this.level == ((GoalYLevel)other).level;
+   }
+
+   @Override
+   public int hashCode() {
+      return Integer.hashCode(this.level);
+   }
 }

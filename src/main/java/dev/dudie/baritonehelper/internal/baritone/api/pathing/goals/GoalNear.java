@@ -99,4 +99,17 @@ public class GoalNear implements Goal, IGoalRenderPos {
          this.rangeSq
       );
    }
+
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      GoalNear goal = (GoalNear)other;
+      return this.x == goal.x && this.y == goal.y && this.z == goal.z && this.rangeSq == goal.rangeSq;
+   }
+
+   @Override
+   public int hashCode() {
+      return 31 * (31 * (31 * this.x + this.y) + this.z) + this.rangeSq;
+   }
 }

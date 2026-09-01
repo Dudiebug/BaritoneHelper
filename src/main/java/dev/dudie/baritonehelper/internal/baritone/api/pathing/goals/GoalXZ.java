@@ -86,4 +86,17 @@ public class GoalXZ implements Goal {
    public int getZ() {
       return this.z;
    }
+
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      GoalXZ goal = (GoalXZ)other;
+      return this.x == goal.x && this.z == goal.z;
+   }
+
+   @Override
+   public int hashCode() {
+      return 31 * this.x + this.z;
+   }
 }

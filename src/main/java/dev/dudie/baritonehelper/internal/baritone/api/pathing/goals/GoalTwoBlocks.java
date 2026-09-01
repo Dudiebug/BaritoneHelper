@@ -60,4 +60,17 @@ public class GoalTwoBlocks implements Goal, IGoalRenderPos {
          "GoalTwoBlocks{x=%s,y=%s,z=%s}", SettingsUtil.maybeCensor(this.x), SettingsUtil.maybeCensor(this.y), SettingsUtil.maybeCensor(this.z)
       );
    }
+
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      GoalTwoBlocks goal = (GoalTwoBlocks)other;
+      return this.x == goal.x && this.y == goal.y && this.z == goal.z;
+   }
+
+   @Override
+   public int hashCode() {
+      return 31 * (31 * this.x + this.y) + this.z;
+   }
 }

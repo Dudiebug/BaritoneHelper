@@ -59,6 +59,19 @@ public class GoalBlock implements Goal, IGoalRenderPos {
       return new BlockPos(this.x, this.y, this.z);
    }
 
+   @Override
+   public boolean equals(Object other) {
+      if (this == other) return true;
+      if (other == null || this.getClass() != other.getClass()) return false;
+      GoalBlock goal = (GoalBlock)other;
+      return this.x == goal.x && this.y == goal.y && this.z == goal.z;
+   }
+
+   @Override
+   public int hashCode() {
+      return 31 * (31 * this.x + this.y) + this.z;
+   }
+
    public static double calculate(double xDiff, int yDiff, double zDiff) {
       double heuristic = 0.0;
       heuristic += GoalYLevel.calculate(0, yDiff);
