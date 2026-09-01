@@ -26,6 +26,7 @@ public final class WorkerJobConfiguration {
     private int requestedBlockCount = 64;
     private boolean unlimitedCount = true;
     private int completedBlockCount;
+    private SearchMode searchMode = SearchMode.WORK_AREA;
     private String workAreaDimension = "";
     private BlockPos workAreaCenter = BlockPos.ZERO;
     private int horizontalSearchRadius = DEFAULT_HORIZONTAL_RADIUS;
@@ -41,6 +42,7 @@ public final class WorkerJobConfiguration {
     public int requestedBlockCount() { return requestedBlockCount; }
     public boolean unlimitedCount() { return unlimitedCount; }
     public int completedBlockCount() { return completedBlockCount; }
+    public SearchMode searchMode() { return searchMode; }
     public String workAreaDimension() { return workAreaDimension; }
     public BlockPos workAreaCenter() { return workAreaCenter; }
     public int horizontalSearchRadius() { return horizontalSearchRadius; }
@@ -52,6 +54,11 @@ public final class WorkerJobConfiguration {
     public WorkerPathingSettings pathing() { return pathing; }
     public int revision() { return revision; }
     public void touch() { revision++; }
+
+    public void setSearchMode(SearchMode mode) {
+        searchMode = mode == null ? SearchMode.WORK_AREA : mode;
+        revision++;
+    }
 
     public boolean complete() {
         return !unlimitedCount && completedBlockCount >= requestedBlockCount;
@@ -130,6 +137,7 @@ public final class WorkerJobConfiguration {
         tag.putInt("RequestedBlockCount", requestedBlockCount);
         tag.putBoolean("UnlimitedCount", unlimitedCount);
         tag.putInt("CompletedBlockCount", completedBlockCount);
+        tag.putString("SearchMode", searchMode.serializedName());
         tag.putString("WorkAreaDimension", workAreaDimension);
         tag.putLong("WorkAreaCenter", workAreaCenter.asLong());
         tag.putInt("HorizontalSearchRadius", horizontalSearchRadius);
@@ -156,6 +164,7 @@ public final class WorkerJobConfiguration {
         // Unlimited jobs may legitimately exceed the finite default request;
         // clamp only to the protocol's safety ceiling when restoring them.
         completedBlockCount = Math.max(0, Math.min(MAX_REQUESTED_COUNT, tag.getInt("CompletedBlockCount")));
+        searchMode = SearchMode.fromSerialized(tag.getString("SearchMode"));
         workAreaDimension = tag.getString("WorkAreaDimension");
         if (workAreaDimension.isBlank()) workAreaDimension = fallbackDimension == null ? "" : fallbackDimension;
         workAreaCenter = tag.contains("WorkAreaCenter", Tag.TAG_LONG) ? BlockPos.of(tag.getLong("WorkAreaCenter")) : fallbackOrigin;

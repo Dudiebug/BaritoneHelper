@@ -7,6 +7,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 
@@ -52,6 +53,8 @@ public final class InternalBaritoneRuntime {
         },
         new ThreadPoolExecutor.AbortPolicy()
     );
+    private static final AtomicLong PATH_CANCELLATIONS = new AtomicLong();
+    private static final AtomicLong SCAN_CANCELLATIONS = new AtomicLong();
     public static final Set<Item> WATER_BUCKETS = Set.of(Items.WATER_BUCKET);
     public static final Set<Item> EMPTY_BUCKETS = Set.of(Items.BUCKET);
 
@@ -64,6 +67,38 @@ public final class InternalBaritoneRuntime {
 
     public static ThreadPoolExecutor getScannerExecutor() {
         return SCAN_EXECUTOR;
+    }
+
+    public static int pathQueueDepth() {
+        return PATH_EXECUTOR.getQueue().size();
+    }
+
+    public static int scannerQueueDepth() {
+        return SCAN_EXECUTOR.getQueue().size();
+    }
+
+    public static int pathQueueCapacity() {
+        return PATH_QUEUE_CAPACITY;
+    }
+
+    public static int scannerQueueCapacity() {
+        return SCAN_QUEUE_CAPACITY;
+    }
+
+    public static void recordPathCancellation() {
+        PATH_CANCELLATIONS.incrementAndGet();
+    }
+
+    public static void recordScanCancellation() {
+        SCAN_CANCELLATIONS.incrementAndGet();
+    }
+
+    public static long pathCancellationCount() {
+        return PATH_CANCELLATIONS.get();
+    }
+
+    public static long scanCancellationCount() {
+        return SCAN_CANCELLATIONS.get();
     }
 
     public static void shutdown() {
