@@ -1,0 +1,14 @@
+{
+  "type": "create:mechanical_crafting",
+  "accept_mirrored": false,
+  "category": "misc",
+  "pattern": ["BEB", "TCT", "BEB"],
+  "key": {
+    "B": {"item": "create:brass_ingot"},
+    "E": {"item": "create:electron_tube"},
+    "T": {"item": "create:brass_casing"},
+    "C": {"item": "create:cogwheel"}
+  },
+  "result": {"id": "baritonehelper:brass_upgrade_kit", "count": 1},
+  "show_notification": true
+}

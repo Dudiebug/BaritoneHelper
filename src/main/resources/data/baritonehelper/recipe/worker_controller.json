@@ -1,9 +1,9 @@
 {
   "type": "minecraft:crafting_shaped",
   "category": "tools",
-  "pattern": [" R ", "ICI", " R "],
+  "pattern": [" R ", "ACA", " R "],
   "key": {
-    "I": {"item": "minecraft:iron_ingot"},
+    "A": {"item": "create:andesite_alloy"},
     "C": {"item": "minecraft:compass"},
     "R": {"item": "minecraft:redstone"}
   },

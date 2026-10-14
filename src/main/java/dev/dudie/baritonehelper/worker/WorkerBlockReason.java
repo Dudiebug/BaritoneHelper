@@ -19,7 +19,8 @@ public enum WorkerBlockReason {
     WORK_AREA_WRONG_DIMENSION("reason.baritonehelper.work_area_wrong_dimension"),
     STORAGE_IN_NO_WORK_ZONE("reason.baritonehelper.storage_in_no_work_zone"),
     PATH_BLOCKED("reason.baritonehelper.path_blocked"),
-    SEARCH_EXHAUSTED("reason.baritonehelper.search_exhausted");
+    SEARCH_EXHAUSTED("reason.baritonehelper.search_exhausted"),
+    OWNER_OFFLINE("reason.baritonehelper.owner_offline");
 
     private final String translationKey;
 

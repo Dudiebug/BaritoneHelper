@@ -20,11 +20,13 @@ class RecipeAndAssetContractTest {
             Path.of("src/main/resources/assets/buddybot");
 
     @Test
-    void canonicalGameplaySurfaceHasExactlyThreeRecipesAndModels() throws IOException {
+    void canonicalGameplaySurfaceHasExactlyFiveRecipesAndModels() throws IOException {
         Set<String> expected = Set.of(
                 "baritone_helper.json",
                 "worker_controller.json",
-                "cargo_upgrade.json");
+                "cargo_upgrade.json",
+                "brass_upgrade_kit.json",
+                "precision_upgrade_kit.json");
 
         assertEquals(expected, fileNames(MODELS));
         assertEquals(expected, fileNames(RECIPES));
@@ -56,9 +58,21 @@ class RecipeAndAssetContractTest {
         assertTrue(combined.contains("\"id\": \"baritonehelper:baritone_helper\""));
         assertTrue(combined.contains("\"id\": \"baritonehelper:worker_controller\""));
         assertTrue(combined.contains("\"id\": \"baritonehelper:cargo_upgrade\""));
+        assertTrue(combined.contains("\"id\": \"baritonehelper:brass_upgrade_kit\""));
+        assertTrue(combined.contains("\"id\": \"baritonehelper:precision_upgrade_kit\""));
         assertFalse(combined.contains("\"id\": \"baritonehelper:worker\""));
         assertFalse(combined.contains("buddy_bot_mk2"));
         assertFalse(combined.contains("buddy_bot_mk3"));
+    }
+
+    @Test
+    void everyRecipeRequiresCreateContent() throws IOException {
+        try (var stream = Files.list(RECIPES)) {
+            for (Path recipe : stream.toList()) {
+                assertTrue(Files.readString(recipe).contains("\"item\": \"create:"),
+                        recipe + " must use Create components");
+            }
+        }
     }
 
     private static Set<String> fileNames(Path directory) throws IOException {

@@ -152,7 +152,7 @@ public final class Release32VerificationGameTests {
     public static void pendingPickupSnapshotRoundTripsAndRestoresLiveWorker(GameTestHelper helper) {
         WorkerEntity worker = helper.spawn(
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(), 1, 2, 1);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         ActiveWorkerData active = owner.getData(BaritoneHelper.ACTIVE_WORKER);
         active.set(worker.getUUID(), worker.level().dimension().location().toString(), worker.blockPosition());
@@ -194,7 +194,7 @@ public final class Release32VerificationGameTests {
     public static void missingCommittedWorkerRedeliversSnapshotExactlyOnce(GameTestHelper helper) {
         WorkerEntity worker = helper.spawn(
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(), 1, 2, 1);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         ActiveWorkerData active = owner.getData(BaritoneHelper.ACTIVE_WORKER);
         active.set(worker.getUUID(), worker.level().dimension().location().toString(), worker.blockPosition());
@@ -228,7 +228,7 @@ public final class Release32VerificationGameTests {
     public static void deliveredPendingPickupCommitsWithoutDuplicate(GameTestHelper helper) {
         WorkerEntity worker = helper.spawn(
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(), 1, 2, 1);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         ActiveWorkerData active = owner.getData(BaritoneHelper.ACTIVE_WORKER);
         active.set(worker.getUUID(), worker.level().dimension().location().toString(), worker.blockPosition());
@@ -276,8 +276,8 @@ public final class Release32VerificationGameTests {
         helper.setBlock(1, 1, 1, Blocks.STONE);
         WorkerEntity worker = helper.spawn(
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(), 1, 2, 1);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
-        ServerPlayer nonOwner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
+        ServerPlayer nonOwner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         helper.assertTrue(worker.isOwnedByPlayer(owner), "owner UUID identity");
         helper.assertFalse(worker.isOwnedByPlayer(nonOwner), "non-owner UUID rejected");

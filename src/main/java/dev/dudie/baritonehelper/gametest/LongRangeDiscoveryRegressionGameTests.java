@@ -637,6 +637,15 @@ public final class LongRangeDiscoveryRegressionGameTests {
                         .markDirty(ChunkPos.asLong(centerChunkX + dx, centerChunkZ + dz));
             }
         }
+        // The GameTest server ticks unthrottled, so tick timeouts can elapse
+        // before worldgen finishes the worker's view window. Generate it up
+        // front so the test measures discovery, not chunk generation speed.
+        int radius = WorkerEntity.ACTIVE_VIEW_RADIUS;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                helper.getLevel().getChunk(centerChunkX + dx, centerChunkZ + dz);
+            }
+        }
         return helper.spawn(
                 BaritoneHelper.BARITONE_HELPER_ENTITY.get(),
                 position.getX(),

@@ -41,7 +41,7 @@ public final class WorkerPlanner {
             BlockPos target) {
         double targetDistance = worker.distanceToSqr(
                 target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5);
-        boolean closeContainer = level.getBlockEntity(target) instanceof Container;
+        boolean closeContainer = WorkerStorage.isStorage(level, target);
         if (targetDistance <= CURRENT_POSITION_DISTANCE_SQUARED
                 && canStandAt(level, worker.blockPosition())
                 && !worker.isInsideNoEnter(worker.blockPosition())

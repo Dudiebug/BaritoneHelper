@@ -9,7 +9,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.Container;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -207,7 +206,8 @@ public final class WorkerController {
             block(WorkerBlockReason.STORAGE_IN_NO_WORK_ZONE);
             return;
         }
-        if (!(level.getBlockEntity(storage) instanceof Container destination)) {
+        var destination = WorkerStorage.resolve(level, storage);
+        if (destination == null) {
             block(WorkerBlockReason.STORAGE_MISSING);
             return;
         }

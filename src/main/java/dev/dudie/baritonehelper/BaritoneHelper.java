@@ -78,6 +78,14 @@ public final class BaritoneHelper {
             ITEMS.register(
                     "cargo_upgrade",
                     () -> new Item(new Item.Properties().stacksTo(1)));
+    public static final DeferredHolder<Item, Item> BRASS_UPGRADE_KIT =
+            ITEMS.register(
+                    "brass_upgrade_kit",
+                    () -> new Item(new Item.Properties().stacksTo(16)));
+    public static final DeferredHolder<Item, Item> PRECISION_UPGRADE_KIT =
+            ITEMS.register(
+                    "precision_upgrade_kit",
+                    () -> new Item(new Item.Properties().stacksTo(16)));
 
     public static final DeferredHolder<MenuType<?>, MenuType<WorkerDashboardMenu>> WORKER_DASHBOARD =
             MENUS.register(
@@ -141,6 +149,8 @@ public final class BaritoneHelper {
             event.accept(BARITONE_HELPER.get());
             event.accept(WORKER_CONTROLLER.get());
             event.accept(CARGO_UPGRADE.get());
+            event.accept(BRASS_UPGRADE_KIT.get());
+            event.accept(PRECISION_UPGRADE_KIT.get());
         }
     }
 

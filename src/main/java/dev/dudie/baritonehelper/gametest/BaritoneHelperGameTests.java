@@ -156,7 +156,7 @@ public final class BaritoneHelperGameTests {
             GameTestHelper helper) {
         supportWorker(helper);
         WorkerEntity worker = spawnWorker(helper);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         Vec3 start = worker.position();
 
@@ -191,7 +191,7 @@ public final class BaritoneHelperGameTests {
             GameTestHelper helper) {
         supportWorker(helper);
         WorkerEntity worker = spawnWorker(helper);
-        var owner = helper.makeMockServerPlayerInLevel();
+        var owner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         owner.getData(BaritoneHelper.ACTIVE_WORKER).set(
                 worker.getUUID(), helper.getLevel().dimension().location().toString(), worker.blockPosition());

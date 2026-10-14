@@ -22,6 +22,10 @@ sourceSets.main.resources {
 }
 
 repositories {
+    // Create, Ponder, Flywheel
+    maven { url = "https://maven.createmod.net" }
+    // Registrate (required by Create at runtime)
+    maven { url = "https://maven.ithundxr.dev/snapshots" }
 }
 
 neoForge {
@@ -70,6 +74,13 @@ neoForge {
 }
 
 dependencies {
+    // Baritone Helper is a Create add-on. Recipes and storage use Create content at
+    // runtime only; no Create classes are referenced from Java sources.
+    runtimeOnly("com.simibubi.create:create-${minecraft_version}:${create_version}") { transitive = false }
+    runtimeOnly "net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}"
+    runtimeOnly "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
+    runtimeOnly "com.tterrag.registrate:Registrate:${registrate_version}"
+
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
 }
@@ -88,6 +99,7 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
             mod_name                : mod_name,
             mod_license             : mod_license,
             mod_version             : mod_version,
+            create_version_range    : create_version_range,
     ]
     inputs.properties replaceProperties
     expand replaceProperties

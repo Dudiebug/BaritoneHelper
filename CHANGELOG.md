@@ -4,6 +4,18 @@ All notable user-facing changes to Baritone Helper are recorded here.
 
 ## Unreleased
 
+### Added
+
+- Baritone Helper is now a Create add-on and requires Create 6.0 for 1.21.1.
+- Andesite, Brass, and Precision miner tiers with Create upgrade kits. Tiers cap work-area radius, mining speed, Roam, offline operation, and cargo capacity.
+- Storage accepts any block with an item-handler capability, including Create item vaults, depots, and funnels.
+
+### Changed
+
+- All recipes use Create components.
+- Newly crafted workers start at Andesite with an unenchanted iron pickaxe instead of an Efficiency V pickaxe and an uncapped 512-block work area.
+- Workers saved before this change load as Precision and keep their previous capabilities.
+
 ## 3.2.0-rc.1 - 2026-08-31
 
 ### Added

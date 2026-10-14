@@ -63,6 +63,7 @@ public final class WorkerItem extends Item {
                 player.getYRot(),
                 0.0F);
         worker.bindTo(player);
+        worker.initializeCraftedWorker();
 
         if (!level.noCollision(worker)) {
             WorkerMessages.send(

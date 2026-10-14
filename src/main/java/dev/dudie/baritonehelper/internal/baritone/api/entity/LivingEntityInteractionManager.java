@@ -293,6 +293,10 @@ public class LivingEntityInteractionManager {
          f /= 5.0F;
       }
 
+      if (entity instanceof dev.dudie.baritonehelper.entity.WorkerEntity worker) {
+         f *= worker.minerTier().breakSpeedMultiplier();
+      }
+
       return f;
    }
 

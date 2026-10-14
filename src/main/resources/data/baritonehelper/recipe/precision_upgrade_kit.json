@@ -1,0 +1,14 @@
+{
+  "type": "create:mechanical_crafting",
+  "accept_mirrored": false,
+  "category": "misc",
+  "pattern": ["SPS", "DRD", "SPS"],
+  "key": {
+    "S": {"item": "create:sturdy_sheet"},
+    "P": {"item": "create:precision_mechanism"},
+    "D": {"item": "create:mechanical_drill"},
+    "R": {"item": "create:railway_casing"}
+  },
+  "result": {"id": "baritonehelper:precision_upgrade_kit", "count": 1},
+  "show_notification": true
+}

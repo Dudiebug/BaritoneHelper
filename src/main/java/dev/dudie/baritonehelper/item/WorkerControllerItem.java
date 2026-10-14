@@ -14,7 +14,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.Container;
+import dev.dudie.baritonehelper.worker.WorkerStorage;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionResultHolder;
@@ -65,7 +65,7 @@ public final class WorkerControllerItem extends Item {
             WorkerMessages.send(player, ChatFormatting.GREEN,
                     "message.baritonehelper.work_area_changed");
         } else if (worker.consumeStorageSelection(player)
-                && level.getBlockEntity(context.getClickedPos()) instanceof Container) {
+                && WorkerStorage.isStorage(level, context.getClickedPos())) {
             var position = context.getClickedPos();
             worker.assignStorage(level, position);
             WorkerMessages.send(player, ChatFormatting.GREEN,

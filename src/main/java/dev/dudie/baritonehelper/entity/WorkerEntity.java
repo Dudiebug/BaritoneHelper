@@ -13,6 +13,7 @@ import dev.dudie.baritonehelper.internal.baritone.api.pathing.goals.GoalBlock;
 import dev.dudie.baritonehelper.internal.baritone.process.MineProcess;
 import dev.dudie.baritonehelper.internal.baritone.utils.ToolSet;
 import dev.dudie.baritonehelper.internal.baritone.utils.player.EntityContext;
+import dev.dudie.baritonehelper.worker.MinerTier;
 import dev.dudie.baritonehelper.worker.WorkerActionResult;
 import dev.dudie.baritonehelper.worker.WorkerActivity;
 import dev.dudie.baritonehelper.worker.WorkerBlockReason;
@@ -84,6 +85,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
+import net.neoforged.neoforge.items.IItemHandler;
 import org.jetbrains.annotations.Nullable;
 
 public final class WorkerEntity extends TamableAnimal implements Container, MenuProvider,
@@ -130,6 +132,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     private boolean brokeBlockThisTick;
 
     private int cargoUpgrades;
+    private MinerTier minerTier = MinerTier.PRECISION;
     private WorkerJob job = WorkerJob.IDLE;
     private WorkerBlockReason blockReason = WorkerBlockReason.NONE;
     private @Nullable ResourceLocation targetBlockId;
@@ -342,7 +345,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
                 || !storagePosition().filter(position::equals).isPresent()
                 || !(level() instanceof ServerLevel serverLevel)
                 || !storageIsIn(serverLevel)
-                || !(level().getBlockEntity(position) instanceof Container)
+                || !WorkerStorage.isStorage(level(), position)
                 || !level().getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) return false;
         return !exclusions.contains(
                 BuiltInRegistries.BLOCK.getKey(level().getBlockState(position).getBlock()));
@@ -370,7 +373,8 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     }
     public void setWorkArea(BlockPos center, int horizontal, int vertical) {
         cancelForConfigurationChange();
-        configuration.setWorkArea(level().dimension().location().toString(), center, horizontal, vertical);
+        configuration.setWorkArea(level().dimension().location().toString(), center,
+                minerTier.clampHorizontal(horizontal), minerTier.clampVertical(vertical));
         jobOrigin = center.immutable();
         setRuntimeState(targetBlockId == null ? WorkerRuntimeState.UNCONFIGURED : WorkerRuntimeState.READY);
         setChanged();
@@ -387,6 +391,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     /** Applies the dashboard's explicit desired search mode without starting the job. */
     public boolean setSearchMode(SearchMode mode) {
         if (mode == null) return false;
+        if (mode == SearchMode.ROAM && !minerTier.allowsRoam()) return false;
         if (configuration.searchMode() == mode) return true;
         cancelForConfigurationChange();
         configuration.setSearchMode(mode);
@@ -601,6 +606,10 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     protected void customServerAiStep() {
         super.customServerAiStep();
         if (!(level() instanceof ServerLevel serverLevel) || pickupFrozen()) return;
+        if (job.activelyWorks() && !minerTier.worksWhileOwnerOffline() && !ownerOnline(serverLevel)) {
+            markBlocked(WorkerBlockReason.OWNER_OFFLINE);
+            return;
+        }
         long started = System.nanoTime();
         workerController.tick(serverLevel);
         if (baritoneEngine != null) {
@@ -970,6 +979,52 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
 
     public int cargoUpgrades() {
         return cargoUpgrades;
+    }
+
+    public MinerTier minerTier() {
+        return minerTier;
+    }
+
+    /**
+     * Configures a newly crafted worker: it starts at the first tier with an
+     * ordinary unenchanted pickaxe instead of the legacy Efficiency V tool.
+     */
+    public void initializeCraftedWorker() {
+        minerTier = MinerTier.ANDESITE;
+        if (getItem(0).is(Items.IRON_PICKAXE)) {
+            setItem(0, new ItemStack(Items.IRON_PICKAXE));
+        }
+        enforceTierLimits();
+        setChanged();
+    }
+
+    /** Advances exactly one tier; returns false when {@code target} is not the next tier. */
+    public boolean upgradeTier(MinerTier target) {
+        if (minerTier.next().filter(target::equals).isEmpty()) return false;
+        minerTier = target;
+        configurationRevision++;
+        recordActivity("TIER:" + target.serializedName());
+        setChanged();
+        return true;
+    }
+
+    /** Clamps persisted configuration to what the current tier permits. */
+    private void enforceTierLimits() {
+        if (configuration.searchMode() == SearchMode.ROAM && !minerTier.allowsRoam()) {
+            configuration.setSearchMode(SearchMode.WORK_AREA);
+        }
+        int horizontal = minerTier.clampHorizontal(configuration.horizontalSearchRadius());
+        int vertical = minerTier.clampVertical(configuration.verticalSearchRadius());
+        if (horizontal != configuration.horizontalSearchRadius()
+                || vertical != configuration.verticalSearchRadius()) {
+            configuration.setWorkArea(configuration.workAreaDimension(), configuration.workAreaCenter(),
+                    horizontal, vertical);
+        }
+    }
+
+    private boolean ownerOnline(ServerLevel level) {
+        UUID ownerId = getOwnerUUID();
+        return ownerId != null && level.getServer().getPlayerList().getPlayer(ownerId) != null;
     }
 
     public int configurationRevision() {
@@ -1382,7 +1437,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
     public void requestDepositOrBlock() {
         if (storagePosition != null && !storageDimension.isBlank()) {
             if (level() instanceof ServerLevel level
-                    && level.getBlockEntity(storagePosition) instanceof Container destination
+                    && WorkerStorage.resolve(level, storagePosition) instanceof IItemHandler destination
                     && !WorkerStorage.canAcceptAny(this, destination)) {
                 markBlocked(WorkerBlockReason.STORAGE_FULL);
             } else {
@@ -1679,8 +1734,33 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         }
 
         ItemStack held = player.getItemInHand(hand);
+        MinerTier kitTier = held.is(BaritoneHelper.BRASS_UPGRADE_KIT.get()) ? MinerTier.BRASS
+                : held.is(BaritoneHelper.PRECISION_UPGRADE_KIT.get()) ? MinerTier.PRECISION
+                : null;
+        if (kitTier != null) {
+            if (upgradeTier(kitTier)) {
+                held.consume(1, player);
+                if (player instanceof ServerPlayer serverPlayer) {
+                    WorkerMessages.send(serverPlayer, ChatFormatting.GREEN,
+                            "message.baritonehelper.tier_upgraded",
+                            Component.translatable(kitTier.translationKey()));
+                }
+            } else if (player instanceof ServerPlayer serverPlayer) {
+                WorkerMessages.send(serverPlayer, ChatFormatting.YELLOW,
+                        "message.baritonehelper.tier_wrong_kit",
+                        Component.translatable(minerTier.translationKey()));
+            }
+            return InteractionResult.SUCCESS;
+        }
+
         if (held.is(BaritoneHelper.CARGO_UPGRADE.get())) {
-            if (cargoUpgrades == 0) {
+            if (!minerTier.acceptsCargoUpgrade()) {
+                if (player instanceof ServerPlayer serverPlayer) {
+                    WorkerMessages.send(serverPlayer, ChatFormatting.YELLOW,
+                            "message.baritonehelper.cargo_requires_tier",
+                            Component.translatable(MinerTier.BRASS.translationKey()));
+                }
+            } else if (cargoUpgrades == 0) {
                 cargoUpgrades = 1;
                 held.consume(1, player);
                 setChanged();
@@ -1837,6 +1917,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         tag.putInt("BaritoneHelperSchema", 3);
         tag.put("WorkerJobConfiguration", configuration.save());
         tag.putInt("CargoUpgrades", cargoUpgrades);
+        tag.putString("MinerTier", minerTier.serializedName());
         tag.putString("WorkerJob", job.name());
         tag.putString("BlockReason", blockReason.name());
         tag.putInt("ConfigurationRevision", configurationRevision);
@@ -1903,6 +1984,9 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         ContainerHelper.loadAllItems(tag, items, level().registryAccess());
 
         cargoUpgrades = Math.max(0, Math.min(1, tag.getInt("CargoUpgrades")));
+        minerTier = tag.contains("MinerTier", Tag.TAG_STRING)
+                ? MinerTier.fromSerialized(tag.getString("MinerTier"))
+                : MinerTier.PRECISION;
         job = WorkerJob.fromSerialized(tag.getString("WorkerJob"));
         blockReason = WorkerBlockReason.fromSerialized(tag.getString("BlockReason"));
         configurationRevision = Math.max(0, tag.getInt("ConfigurationRevision"));
@@ -1979,6 +2063,7 @@ public final class WorkerEntity extends TamableAnimal implements Container, Menu
         ticketCenter = Long.MIN_VALUE;
         ticketSimulationRadius = -1;
         workerController.resetTransientState();
+        enforceTierLimits();
 
         setCustomName(Component.translatable("entity.baritonehelper.baritone_helper"));
         setCustomNameVisible(false);

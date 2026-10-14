@@ -1,11 +1,12 @@
 {
   "type": "minecraft:crafting_shaped",
   "category": "misc",
-  "pattern": ["IRI", "RPR", "IRI"],
+  "pattern": ["AHA", "CDC", "AAA"],
   "key": {
-    "I": {"item": "minecraft:iron_ingot"},
-    "R": {"item": "minecraft:redstone"},
-    "P": {"item": "minecraft:carved_pumpkin"}
+    "A": {"item": "create:andesite_alloy"},
+    "H": {"item": "minecraft:carved_pumpkin"},
+    "C": {"item": "create:andesite_casing"},
+    "D": {"item": "create:mechanical_drill"}
   },
   "result": {"id": "baritonehelper:baritone_helper", "count": 1}
 }

@@ -30,7 +30,7 @@ public final class RemoteInventoryLifecycleGameTests {
     public static void ownerCanOpenBothInventorySizesFromAnySameDimensionDistance(
             GameTestHelper helper) {
         WorkerEntity worker = spawnWorker(helper);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         owner.setPos(worker.getX() + 128.0, worker.getY(), worker.getZ() + 128.0);
 
@@ -59,8 +59,8 @@ public final class RemoteInventoryLifecycleGameTests {
     public static void nonOwnerAndCrossDimensionOwnerCannotOpenInventory(
             GameTestHelper helper) {
         WorkerEntity worker = spawnWorker(helper);
-        ServerPlayer owner = helper.makeMockServerPlayerInLevel();
-        ServerPlayer nonOwner = helper.makeMockServerPlayerInLevel();
+        ServerPlayer owner = GameTestPlayers.mockServerPlayer(helper);
+        ServerPlayer nonOwner = GameTestPlayers.mockServerPlayer(helper);
         worker.bindTo(owner);
         nonOwner.setPos(worker.getX(), worker.getY(), worker.getZ());
 

@@ -9,6 +9,7 @@ Baritone Helper targets:
 - Minecraft 1.21.1
 - NeoForge 21.1.248 or a compatible newer 21.1 build
 - Java 21
+- Create 6.0 for 1.21.1 (required; Baritone Helper is a Create add-on)
 
 Install the same Baritone Helper JAR on the dedicated server and clients that will connect and use the controller UI.
 
@@ -16,7 +17,35 @@ Install the same Baritone Helper JAR on the dedicated server and clients that wi
 
 - `baritonehelper:baritone_helper` — places the worker.
 - `baritonehelper:worker_controller` — opens and controls the worker dashboard.
-- `baritonehelper:cargo_upgrade` — expands worker storage from 27 to 54 slots.
+- `baritonehelper:cargo_upgrade` — expands worker storage from 27 to 54 slots (Brass tier or better).
+- `baritonehelper:brass_upgrade_kit` — upgrades a placed Andesite worker to Brass.
+- `baritonehelper:precision_upgrade_kit` — upgrades a placed Brass worker to Precision.
+
+## Miner tiers
+
+Every crafted worker starts at the **Andesite** tier with an ordinary unenchanted iron pickaxe. Right-click a placed worker with an upgrade kit to advance it one tier; kits cannot skip tiers and a rejected kit is not consumed. Packing a worker keeps its tier.
+
+| | Andesite | Brass | Precision |
+| --- | --- | --- | --- |
+| Max work-area radius (horizontal / vertical) | 128 / 64 | 256 / 96 | 512 / 128 |
+| Mining speed | 70% | 85% | 100% |
+| Roam mode | No | No | Yes |
+| Keeps working while owner is offline | No | Yes | Yes |
+| Cargo upgrade (54 slots) | No | Yes | Yes |
+
+An Andesite worker whose owner logs out is blocked with **Owner offline** and must be restarted. Requested radii above the tier cap are clamped. Workers placed before tiers existed load as Precision and keep their previous capabilities.
+
+| Item | Recipe |
+| --- | --- |
+| Baritone Helper | Crafting table: andesite alloy, andesite casings, carved pumpkin, mechanical drill |
+| Worker Controller | Crafting table: andesite alloy, compass, redstone |
+| Brass Upgrade Kit | Mechanical crafter: brass ingots, electron tubes, brass casings, cogwheel |
+| Precision Upgrade Kit | Mechanical crafter: sturdy sheets, precision mechanisms, mechanical drills, railway casing |
+| Cargo Upgrade | Crafting table: brass ingots, leather, item vault |
+
+## Storage
+
+Any block that exposes an item inventory can be assigned as storage: vanilla chests and barrels as well as Create item vaults, depots, funnels, and other logistics blocks.
 
 ## Deploying a worker
 

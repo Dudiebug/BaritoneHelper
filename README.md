@@ -5,7 +5,7 @@
 [![Minecraft 1.21.1](https://img.shields.io/badge/Minecraft-1.21.1-3C8527)](https://www.minecraft.net/)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20LGPL--3.0--or--later-blue)](THIRD_PARTY_NOTICES.md)
 
-Baritone Helper is an autonomous resource-worker mod for Minecraft 1.21.1 on NeoForge. Place an owner-bound worker, select a block target and safety policy, then let its relocated server-side Baritone-derived runtime search, pathfind, mine, collect, and deposit resources. Work is bounded by default; explicit **Roam** mode allows continuing frontier exploration.
+Baritone Helper is an autonomous resource-worker Create add-on for Minecraft 1.21.1 on NeoForge. Place an owner-bound worker, select a block target and safety policy, then let its relocated server-side Baritone-derived runtime search, pathfind, mine, collect, and deposit resources. Work is bounded by default; explicit **Roam** mode allows continuing frontier exploration.
 
 > Baritone Helper is not a drop-in Baritone client. It packages a server-oriented Baritone-derived runtime behind a persistent worker entity and controller workflow.
 
@@ -23,6 +23,8 @@ Use the [GitHub releases page](https://github.com/Dudiebug/BaritoneHelper/releas
 - **Canonical cargo and storage** — workers provide 27 inventory slots, expandable to 54, and preserve cargo when assigned storage is missing or full.
 - **Protocol-4 remote control** — owners address workers by UUID and dimension, with idempotent actions, revisions, sequences, and live path/search telemetry.
 - **Safe packed lifecycle** — transactional pickup creates exactly one owner-bound packed worker and restores it stopped with the same UUID.
+- **Create progression** — workers start at Andesite and are upgraded to Brass and Precision with Create-crafted kits that raise range, mining speed, and unlock Roam, offline work, and cargo.
+- **Create logistics** — deposit into chests, Create item vaults, depots, funnels, or any item-handler block.
 - **Offline operation** — an already active worker can remain operational when its owner disconnects.
 
 ## Requirements
@@ -32,6 +34,7 @@ Use the [GitHub releases page](https://github.com/Dudiebug/BaritoneHelper/releas
 | Minecraft | 1.21.1 |
 | NeoForge | 21.1.248 or newer compatible 21.1 build |
 | Java | 21 |
+| Create | 6.0 for 1.21.1 (required) |
 | Install side | Dedicated server and clients |
 
 ## Quick start
